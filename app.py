@@ -189,33 +189,58 @@ st.markdown("""
         background: var(--primary-orange-hover) !important;
     }
 
-    /* File uploader - Style it to look better */
-    .stFileUploader {
+    /* File uploader - Make it obviously interactive */
+    [data-testid="stFileUploader"] {
         background: var(--card-bg) !important;
-        border: 2px dashed var(--border-color) !important;
+        border: 2px dashed var(--primary-orange) !important;
         border-radius: 12px !important;
-        padding: 1rem !important;
+        padding: 2rem !important;
+        transition: all 0.3s ease !important;
     }
 
-    .stFileUploader:hover {
-        border-color: var(--primary-orange) !important;
+    [data-testid="stFileUploader"]:hover {
+        border-color: var(--primary-orange-hover) !important;
         background: var(--primary-orange-light) !important;
+        transform: scale(1.01);
     }
 
-    .stFileUploader > div {
+    [data-testid="stFileUploader"] > div {
         background: transparent !important;
     }
 
-    .stFileUploader label {
+    [data-testid="stFileUploader"] label {
         color: var(--dark-text) !important;
+        font-weight: 600 !important;
+        font-size: 1rem !important;
     }
 
-    /* Style the file uploader button */
-    .stFileUploader button {
+    [data-testid="stFileUploader"] small {
+        color: var(--secondary-text) !important;
+    }
+
+    /* Style the Browse files button */
+    [data-testid="stFileUploader"] button {
         background: var(--primary-orange) !important;
         color: white !important;
         border: none !important;
-        border-radius: 6px !important;
+        border-radius: 8px !important;
+        padding: 0.6rem 1.5rem !important;
+        font-weight: 600 !important;
+        cursor: pointer !important;
+    }
+
+    [data-testid="stFileUploader"] button:hover {
+        background: var(--primary-orange-hover) !important;
+    }
+
+    /* The drag and drop text area */
+    [data-testid="stFileUploader"] section {
+        padding: 1rem !important;
+    }
+
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] {
+        background: transparent !important;
+        border: none !important;
     }
 
     /* Progress bar */
@@ -266,29 +291,47 @@ st.markdown("""
         box-shadow: 0 0 0 2px var(--primary-orange-light) !important;
     }
 
-    /* Expander (for logs) - FIXED: Dark background with light text */
-    .streamlit-expanderHeader {
+    /* Expander (for logs) - Dark background with light text */
+    [data-testid="stExpander"] {
         background: #2D2D2D !important;
         border-radius: 8px !important;
-        font-size: 0.85rem !important;
+        border: 1px solid #3D3D3D !important;
+    }
+
+    [data-testid="stExpander"] summary {
+        color: #FFFFFF !important;
+        font-size: 0.9rem !important;
+    }
+
+    [data-testid="stExpander"] summary span {
         color: #FFFFFF !important;
     }
 
-    .streamlit-expanderContent {
-        background: #1E1E1E !important;
-        border: 1px solid #3D3D3D !important;
-        border-top: none !important;
-        border-radius: 0 0 8px 8px !important;
+    [data-testid="stExpander"] summary svg {
+        fill: #FFFFFF !important;
+        stroke: #FFFFFF !important;
     }
 
-    /* Code block inside expander */
-    .streamlit-expanderContent pre {
+    [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
         background: #1E1E1E !important;
         color: #E0E0E0 !important;
     }
 
-    .streamlit-expanderContent code {
+    /* Code block inside expander */
+    [data-testid="stExpander"] pre {
         background: #1E1E1E !important;
+        color: #E0E0E0 !important;
+    }
+
+    [data-testid="stExpander"] code {
+        background: #1E1E1E !important;
+        color: #E0E0E0 !important;
+    }
+
+    /* Expander text styling */
+    [data-testid="stExpander"] p,
+    [data-testid="stExpander"] span,
+    [data-testid="stExpander"] div {
         color: #E0E0E0 !important;
     }
 

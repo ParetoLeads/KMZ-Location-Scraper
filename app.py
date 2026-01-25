@@ -189,58 +189,32 @@ st.markdown("""
         background: var(--primary-orange-hover) !important;
     }
 
-    /* File uploader - Make it obviously interactive */
-    [data-testid="stFileUploader"] {
+    /* File uploader - Minimal styling to not break drag-drop */
+    [data-testid="stFileUploader"] > div > div {
         background: var(--card-bg) !important;
         border: 2px dashed var(--primary-orange) !important;
         border-radius: 12px !important;
-        padding: 2rem !important;
-        transition: all 0.3s ease !important;
-    }
-
-    [data-testid="stFileUploader"]:hover {
-        border-color: var(--primary-orange-hover) !important;
-        background: var(--primary-orange-light) !important;
-        transform: scale(1.01);
-    }
-
-    [data-testid="stFileUploader"] > div {
-        background: transparent !important;
     }
 
     [data-testid="stFileUploader"] label {
         color: var(--dark-text) !important;
         font-weight: 600 !important;
-        font-size: 1rem !important;
     }
 
     [data-testid="stFileUploader"] small {
         color: var(--secondary-text) !important;
     }
 
-    /* Style the Browse files button */
+    /* Style the Browse files button only */
     [data-testid="stFileUploader"] button {
         background: var(--primary-orange) !important;
         color: white !important;
         border: none !important;
         border-radius: 8px !important;
-        padding: 0.6rem 1.5rem !important;
-        font-weight: 600 !important;
-        cursor: pointer !important;
     }
 
     [data-testid="stFileUploader"] button:hover {
         background: var(--primary-orange-hover) !important;
-    }
-
-    /* The drag and drop text area */
-    [data-testid="stFileUploader"] section {
-        padding: 1rem !important;
-    }
-
-    [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] {
-        background: transparent !important;
-        border: none !important;
     }
 
     /* Progress bar */

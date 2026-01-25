@@ -189,20 +189,54 @@ st.markdown("""
         background: var(--primary-orange-hover) !important;
     }
 
-    /* File uploader - Minimal styling to not break drag-drop */
+    /* File uploader - Larger drop area */
     [data-testid="stFileUploader"] > div > div {
         background: var(--card-bg) !important;
         border: 2px dashed var(--primary-orange) !important;
         border-radius: 12px !important;
+        min-height: 180px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+        align-items: center !important;
+        padding: 2rem !important;
     }
 
     [data-testid="stFileUploader"] label {
         color: var(--dark-text) !important;
         font-weight: 600 !important;
+        font-size: 1.1rem !important;
     }
 
     [data-testid="stFileUploader"] small {
         color: var(--secondary-text) !important;
+    }
+
+    /* Uploaded file name - make it visible with dark text */
+    [data-testid="stFileUploader"] span,
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] div {
+        color: #1A1A1A !important;
+    }
+
+    /* The file name row specifically */
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] {
+        background: white !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 8px !important;
+        padding: 0.75rem 1rem !important;
+    }
+
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] span {
+        color: #1A1A1A !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+    }
+
+    /* File size text */
+    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] small,
+    [data-testid="stFileUploader"] small {
+        color: #6B7280 !important;
     }
 
     /* Style the Browse files button only */
@@ -211,10 +245,18 @@ st.markdown("""
         color: white !important;
         border: none !important;
         border-radius: 8px !important;
+        padding: 0.6rem 1.5rem !important;
+        font-size: 1rem !important;
     }
 
     [data-testid="stFileUploader"] button:hover {
         background: var(--primary-orange-hover) !important;
+    }
+
+    /* File delete/remove button */
+    [data-testid="stFileUploader"] button[kind="secondary"] {
+        background: #EF4444 !important;
+        color: white !important;
     }
 
     /* Progress bar */
@@ -350,26 +392,28 @@ st.markdown("""
         color: var(--dark-text) !important;
     }
 
-    /* File info card */
+    /* File info card - prominent display after upload */
     .file-info {
-        background: #ECFDF5;
-        border: 1px solid #10B981;
-        border-radius: 8px;
-        padding: 1rem;
+        background: linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%);
+        border: 2px solid #10B981;
+        border-radius: 12px;
+        padding: 1.5rem;
         text-align: center;
-        margin-top: 1rem;
+        margin-top: 1.5rem;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
     }
 
     .file-info-name {
-        font-weight: 600;
+        font-weight: 700;
+        font-size: 1.1rem;
         color: #065F46;
         margin: 0;
     }
 
     .file-info-size {
-        font-size: 0.85rem;
+        font-size: 0.9rem;
         color: #047857;
-        margin: 0.25rem 0 0 0;
+        margin: 0.5rem 0 0 0;
     }
 </style>
 """, unsafe_allow_html=True)

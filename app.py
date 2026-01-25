@@ -19,31 +19,23 @@ st.set_page_config(
 )
 
 # ============================================================================
-# PARETOLEADS BRANDED STYLES - Light Theme
+# STYLES - Minimal CSS, working WITH Streamlit's theme
 # ============================================================================
+# Typography Scale (1.25 ratio, 16px minimum):
+# - Metric Values: 36px / 800
+# - Logo: 28px / 700
+# - Section Title: 22px / 600
+# - Body/Labels/Buttons: 18px / 400-600
+# - Minimum (captions): 16px / 400
+
 st.markdown("""
 <style>
     /* Import Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    /* Root variables */
-    :root {
-        --primary-orange: #FF6B00;
-        --primary-orange-hover: #E55F00;
-        --primary-orange-light: #FFF4ED;
-        --dark-text: #1A1A1A;
-        --secondary-text: #6B7280;
-        --light-bg: #FFFFFF;
-        --card-bg: #F8F9FA;
-        --border-color: #E5E7EB;
-        --success-green: #10B981;
-        --warning-yellow: #F59E0B;
-    }
-
-    /* Global styles */
-    .stApp {
-        background-color: var(--light-bg) !important;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    /* Global font */
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
     /* Hide Streamlit branding */
@@ -51,369 +43,237 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
-    /* Main container */
+    /* Main container spacing */
     .main .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
-        max-width: 1200px;
+        max-width: 1100px;
     }
 
-    /* Header styles */
+    /* ==================== CUSTOM HTML ELEMENTS ==================== */
+
+    /* Header */
     .main-header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 1rem 0 2rem 0;
-        border-bottom: 1px solid var(--border-color);
-        margin-bottom: 2rem;
-    }
-
-    .logo-section {
-        display: flex;
-        align-items: center;
-        gap: 12px;
+        gap: 16px;
+        padding: 16px 0 32px 0;
+        border-bottom: 1px solid #E5E7EB;
+        margin-bottom: 32px;
     }
 
     .logo-text {
-        font-size: 1.75rem;
+        font-size: 28px;
         font-weight: 700;
-        color: var(--dark-text);
+        color: #1A1A1A;
         margin: 0;
         letter-spacing: -0.5px;
     }
 
     .logo-text span {
-        color: var(--primary-orange);
+        color: #FF6B00;
     }
 
     .app-badge {
-        background: var(--primary-orange-light);
-        color: var(--primary-orange);
-        padding: 4px 12px;
+        background: #FFF4ED;
+        color: #FF6B00;
+        padding: 6px 14px;
         border-radius: 20px;
-        font-size: 0.75rem;
+        font-size: 16px;
         font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
     }
 
     /* Section titles */
     .section-title {
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: var(--dark-text);
-        margin: 0 0 1rem 0;
-        display: flex;
-        align-items: center;
-        gap: 8px;
+        font-size: 22px;
+        font-weight: 600;
+        color: #1A1A1A;
+        margin: 0 0 8px 0;
     }
 
     .section-subtitle {
-        font-size: 0.9rem;
-        color: var(--secondary-text);
-        margin: -0.5rem 0 1.5rem 0;
-    }
-
-    /* Card styles */
-    .info-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
+        font-size: 16px;
+        color: #6B7280;
+        margin: 0 0 24px 0;
     }
 
     /* Metric cards */
     .metric-card {
-        background: white;
-        border: 1px solid var(--border-color);
+        background: #FFFFFF;
+        border: 1px solid #E5E7EB;
         border-radius: 12px;
-        padding: 1.25rem;
+        padding: 20px;
         text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
 
     .metric-value {
-        font-size: 2rem;
+        font-size: 36px;
         font-weight: 800;
-        color: var(--dark-text);
+        color: #1A1A1A;
         line-height: 1.2;
     }
 
     .metric-value.orange {
-        color: var(--primary-orange);
+        color: #FF6B00;
     }
 
     .metric-label {
-        font-size: 0.8rem;
-        color: var(--secondary-text);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-top: 0.25rem;
+        font-size: 16px;
+        color: #6B7280;
+        margin-top: 4px;
     }
 
-    /* Buttons */
-    .stButton > button {
-        background: var(--primary-orange) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.75rem 2rem !important;
-        font-weight: 600 !important;
-        font-size: 1rem !important;
-        transition: all 0.2s ease !important;
-        width: 100%;
-    }
-
-    .stButton > button:hover {
-        background: var(--primary-orange-hover) !important;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(255, 107, 0, 0.3) !important;
-    }
-
-    .stButton > button:disabled {
-        background: var(--border-color) !important;
-        color: var(--secondary-text) !important;
-    }
-
-    /* Download button special styling */
-    .stDownloadButton > button {
-        background: var(--primary-orange) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        font-weight: 600 !important;
-    }
-
-    .stDownloadButton > button:hover {
-        background: var(--primary-orange-hover) !important;
-    }
-
-    /* File uploader - Larger drop area */
-    [data-testid="stFileUploader"] > div > div {
-        background: var(--card-bg) !important;
-        border: 2px dashed var(--primary-orange) !important;
-        border-radius: 12px !important;
-        min-height: 180px !important;
-        display: flex !important;
-        flex-direction: column !important;
-        justify-content: center !important;
-        align-items: center !important;
-        padding: 2rem !important;
-    }
-
-    [data-testid="stFileUploader"] label {
-        color: var(--dark-text) !important;
-        font-weight: 600 !important;
-        font-size: 1.1rem !important;
-    }
-
-    [data-testid="stFileUploader"] small {
-        color: var(--secondary-text) !important;
-    }
-
-    /* Uploaded file name - make it visible with dark text */
-    [data-testid="stFileUploader"] span,
-    [data-testid="stFileUploader"] p,
-    [data-testid="stFileUploader"] div {
-        color: #1A1A1A !important;
-    }
-
-    /* The file name row specifically */
-    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] {
-        background: white !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 8px !important;
-        padding: 0.75rem 1rem !important;
-    }
-
-    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] span {
-        color: #1A1A1A !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
-    }
-
-    /* File size text */
-    [data-testid="stFileUploader"] [data-testid="stFileUploaderFile"] small,
-    [data-testid="stFileUploader"] small {
-        color: #6B7280 !important;
-    }
-
-    /* Style the Browse files button only */
-    [data-testid="stFileUploader"] button {
-        background: var(--primary-orange) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.6rem 1.5rem !important;
-        font-size: 1rem !important;
-    }
-
-    [data-testid="stFileUploader"] button:hover {
-        background: var(--primary-orange-hover) !important;
-    }
-
-    /* File delete/remove button */
-    [data-testid="stFileUploader"] button[kind="secondary"] {
-        background: #EF4444 !important;
-        color: white !important;
-    }
-
-    /* Progress bar */
-    .stProgress > div > div > div > div {
-        background: var(--primary-orange) !important;
-    }
-
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        background: var(--card-bg);
-        border-radius: 10px;
-        padding: 4px;
-    }
-
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-weight: 500;
-        color: var(--secondary-text);
-    }
-
-    .stTabs [aria-selected="true"] {
-        background: white !important;
-        color: var(--dark-text) !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-
-    /* Data table */
-    .stDataFrame {
-        border: 1px solid var(--border-color);
+    /* File upload success card */
+    .file-success {
+        background: #ECFDF5;
+        border: 1px solid #10B981;
         border-radius: 12px;
-        overflow: hidden;
+        padding: 20px;
+        text-align: center;
+        margin-top: 16px;
     }
 
-    /* Text input */
-    .stTextInput > div > div > input {
-        border-radius: 8px !important;
-        border: 1px solid var(--border-color) !important;
-        padding: 0.75rem !important;
-        color: var(--dark-text) !important;
-        background: white !important;
+    .file-success-name {
+        font-size: 18px;
+        font-weight: 600;
+        color: #065F46;
+        margin: 0;
     }
 
-    .stTextInput > div > div > input:focus {
-        border-color: var(--primary-orange) !important;
-        box-shadow: 0 0 0 2px var(--primary-orange-light) !important;
-    }
-
-    /* Expander (for logs) - Dark background with light text */
-    [data-testid="stExpander"] {
-        background: #2D2D2D !important;
-        border-radius: 8px !important;
-        border: 1px solid #3D3D3D !important;
-    }
-
-    [data-testid="stExpander"] summary {
-        color: #FFFFFF !important;
-        font-size: 0.9rem !important;
-    }
-
-    [data-testid="stExpander"] summary span {
-        color: #FFFFFF !important;
-    }
-
-    [data-testid="stExpander"] summary svg {
-        fill: #FFFFFF !important;
-        stroke: #FFFFFF !important;
-    }
-
-    [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
-        background: #1E1E1E !important;
-        color: #E0E0E0 !important;
-    }
-
-    /* Code block inside expander */
-    [data-testid="stExpander"] pre {
-        background: #1E1E1E !important;
-        color: #E0E0E0 !important;
-    }
-
-    [data-testid="stExpander"] code {
-        background: #1E1E1E !important;
-        color: #E0E0E0 !important;
-    }
-
-    /* Expander text styling */
-    [data-testid="stExpander"] p,
-    [data-testid="stExpander"] span,
-    [data-testid="stExpander"] div {
-        color: #E0E0E0 !important;
-    }
-
-    /* Alerts */
-    .stSuccess {
-        background: #ECFDF5 !important;
-        border: 1px solid #10B981 !important;
-        color: #065F46 !important;
-    }
-
-    .stError {
-        background: #FEF2F2 !important;
-        border: 1px solid #EF4444 !important;
-        color: #991B1B !important;
-    }
-
-    /* Map container */
-    .map-container {
-        border-radius: 12px;
-        overflow: hidden;
-        border: 1px solid var(--border-color);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    .file-success-size {
+        font-size: 16px;
+        color: #047857;
+        margin: 8px 0 0 0;
     }
 
     /* Footer */
     .footer {
         text-align: center;
-        padding: 2rem 0 1rem 0;
-        color: var(--secondary-text);
-        font-size: 0.8rem;
-        border-top: 1px solid var(--border-color);
-        margin-top: 3rem;
+        padding: 32px 0 16px 0;
+        color: #6B7280;
+        font-size: 16px;
+        border-top: 1px solid #E5E7EB;
+        margin-top: 48px;
     }
 
     .footer a {
-        color: var(--primary-orange);
+        color: #FF6B00;
         text-decoration: none;
     }
 
-    /* Hide default Streamlit elements we're replacing */
-    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-        color: var(--dark-text) !important;
+    /* ==================== STREAMLIT NATIVE ELEMENTS ==================== */
+    /* Only override what's necessary, let theme handle the rest */
+
+    /* Buttons - orange theme */
+    .stButton > button {
+        background: #FF6B00 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 12px 24px !important;
+        font-size: 18px !important;
+        font-weight: 600 !important;
     }
 
-    /* File info card - prominent display after upload */
-    .file-info {
-        background: linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%);
-        border: 2px solid #10B981;
-        border-radius: 12px;
-        padding: 1.5rem;
-        text-align: center;
-        margin-top: 1.5rem;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+    .stButton > button:hover {
+        background: #E55F00 !important;
     }
 
-    .file-info-name {
-        font-weight: 700;
-        font-size: 1.1rem;
-        color: #065F46;
-        margin: 0;
+    .stDownloadButton > button {
+        background: #FF6B00 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-size: 16px !important;
+        font-weight: 600 !important;
     }
 
-    .file-info-size {
-        font-size: 0.9rem;
-        color: #047857;
-        margin: 0.5rem 0 0 0;
+    /* File uploader - just add orange dashed border */
+    [data-testid="stFileUploader"] > div > div {
+        border: 2px dashed #FF6B00 !important;
+        border-radius: 12px !important;
+        min-height: 200px !important;
+    }
+
+    /* File uploader button */
+    [data-testid="stFileUploader"] button {
+        background: #FF6B00 !important;
+        color: #FFFFFF !important;
+        border-radius: 8px !important;
+    }
+
+    /* Progress bar */
+    .stProgress > div > div > div > div {
+        background: #FF6B00 !important;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        background: #F5F5F5;
+        border-radius: 10px;
+        padding: 4px;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-size: 16px;
+        font-weight: 500;
+    }
+
+    .stTabs [aria-selected="true"] {
+        background: #FFFFFF !important;
+    }
+
+    /* Text input */
+    .stTextInput input {
+        font-size: 16px !important;
+        padding: 12px !important;
+        border-radius: 8px !important;
+    }
+
+    /* Expander (Processing Log) - dark theme for contrast */
+    [data-testid="stExpander"] {
+        background: #2D2D2D !important;
+        border-radius: 8px !important;
+        border: none !important;
+    }
+
+    [data-testid="stExpander"] summary {
+        color: #FFFFFF !important;
+        font-size: 16px !important;
+    }
+
+    [data-testid="stExpander"] summary span,
+    [data-testid="stExpander"] summary p {
+        color: #FFFFFF !important;
+    }
+
+    [data-testid="stExpander"] svg {
+        stroke: #FFFFFF !important;
+    }
+
+    [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+        background: #1E1E1E !important;
+    }
+
+    [data-testid="stExpander"] pre,
+    [data-testid="stExpander"] code {
+        background: #1E1E1E !important;
+        color: #E0E0E0 !important;
+        font-size: 14px !important;
+    }
+
+    [data-testid="stExpander"] p,
+    [data-testid="stExpander"] span {
+        color: #E0E0E0 !important;
+    }
+
+    /* Alerts */
+    [data-testid="stAlert"] {
+        font-size: 16px !important;
+        border-radius: 8px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -423,37 +283,32 @@ st.markdown("""
 # ============================================================================
 st.markdown("""
 <div class="main-header">
-    <div class="logo-section">
-        <div>
-            <p class="logo-text">pareto<span>leads</span></p>
-        </div>
-        <span class="app-badge">Location Scraper</span>
-    </div>
+    <p class="logo-text">pareto<span>leads</span></p>
+    <span class="app-badge">Location Scraper</span>
 </div>
 """, unsafe_allow_html=True)
 
 # ============================================================================
 # UPLOAD SECTION
 # ============================================================================
-st.markdown('<p class="section-title">📁 Upload KMZ File</p>', unsafe_allow_html=True)
+st.markdown('<p class="section-title">Upload KMZ File</p>', unsafe_allow_html=True)
 st.markdown('<p class="section-subtitle">Upload a KMZ file containing the boundary polygon to analyze locations within the area.</p>', unsafe_allow_html=True)
 
-# File uploader - using native Streamlit uploader (no custom overlay that blocks clicks)
+# File uploader - native Streamlit, styled via CSS
 col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     uploaded_file = st.file_uploader(
-        f"📍 Drop your KMZ file here (Max {config.MAX_FILE_SIZE_MB}MB)",
+        f"Drop your KMZ file here or click to browse (Max {config.MAX_FILE_SIZE_MB}MB)",
         type=['kmz'],
-        help=f"Select a KMZ file containing the boundary polygon. Maximum file size: {config.MAX_FILE_SIZE_MB}MB",
-        accept_multiple_files=False
+        help=f"Select a KMZ file containing the boundary polygon. Maximum file size: {config.MAX_FILE_SIZE_MB}MB"
     )
 
-    # Show file info if uploaded
+    # Show success message when file uploaded
     if uploaded_file is not None:
         st.markdown(f"""
-        <div class="file-info">
-            <p class="file-info-name">✅ {uploaded_file.name}</p>
-            <p class="file-info-size">{uploaded_file.size / 1024:.1f} KB • Ready to analyze</p>
+        <div class="file-success">
+            <p class="file-success-name">✓ {uploaded_file.name}</p>
+            <p class="file-success-size">{uploaded_file.size / 1024:.1f} KB • Ready to analyze</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -479,11 +334,12 @@ if uploaded_file is not None:
     try:
         validate_file_size(uploaded_file.size)
     except ValidationError as e:
-        st.error(f"❌ {str(e)}")
+        st.error(f"File too large: {str(e)}")
     else:
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            if st.button("🚀 Start Analysis", type="primary", disabled=st.session_state.processing, use_container_width=True):
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("Start Analysis", type="primary", disabled=st.session_state.processing, use_container_width=True):
                 st.session_state.processing = True
                 st.session_state.results = None
                 st.session_state.excel_data = None
@@ -498,7 +354,7 @@ if uploaded_file is not None:
                 try:
                     validate_kmz_file(tmp_kmz_path)
                 except (ValidationError, KMZParseError) as e:
-                    st.error(f"❌ Invalid KMZ file: {str(e)}")
+                    st.error(f"Invalid KMZ file: {str(e)}")
                     st.session_state.processing = False
                     if os.path.exists(tmp_kmz_path):
                         os.unlink(tmp_kmz_path)
@@ -511,14 +367,13 @@ if uploaded_file is not None:
                         try:
                             validate_api_key(api_key)
                         except ValidationError as e:
-                            st.error(f"⚠️ {str(e)}")
+                            st.error(f"API Key Error: {str(e)}")
                             st.session_state.processing = False
                         else:
                             # Progress UI
                             progress_container = st.container()
                             with progress_container:
-                                st.markdown("---")
-                                st.markdown("**⏳ Processing...**")
+                                st.divider()
                                 stage_text = st.empty()
                                 main_progress = st.progress(0)
                                 progress_metrics = st.empty()
@@ -575,20 +430,20 @@ if uploaded_file is not None:
                                         st.session_state.progress_messages = progress_messages
                                         st.session_state.status_messages = status_messages
                                         st.session_state.polygon_points = analyzer.polygon_points
-                                        st.success(f"✅ Successfully processed {len(results)} locations!")
+                                        st.success(f"Successfully processed {len(results)} locations!")
                                     else:
-                                        st.warning("⚠️ Analysis completed but Excel export failed.")
+                                        st.warning("Analysis completed but Excel export failed.")
                                         st.session_state.results = results
                                         st.session_state.progress_messages = progress_messages
                                         st.session_state.status_messages = status_messages
                                 else:
-                                    st.error("❌ Analysis failed. Check the log below for details.")
+                                    st.error("Analysis failed. Check the log below for details.")
                                     st.session_state.progress_messages = progress_messages
                                     st.session_state.status_messages = status_messages
                                     main_progress.progress(0)
 
                             except Exception as e:
-                                st.error(f"❌ Error during analysis: {str(e)}")
+                                st.error(f"Error during analysis: {str(e)}")
                                 st.session_state.progress_messages = progress_messages
                                 st.session_state.status_messages = status_messages
                                 import traceback
@@ -603,8 +458,7 @@ if uploaded_file is not None:
                                 st.session_state.processing = False
 
                     except Exception as e:
-                        st.error(f"❌ Error: {str(e)}")
-                        import traceback
+                        st.error(f"Error: {str(e)}")
                         st.session_state.processing = False
                         if 'tmp_kmz_path' in locals() and os.path.exists(tmp_kmz_path):
                             os.unlink(tmp_kmz_path)
@@ -613,16 +467,16 @@ if uploaded_file is not None:
 # RESULTS SECTION
 # ============================================================================
 if st.session_state.results is not None:
-    st.markdown("---")
+    st.divider()
 
     # Results header with download button
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown('<p class="section-title">📊 Analysis Results</p>', unsafe_allow_html=True)
+        st.markdown('<p class="section-title">Analysis Results</p>', unsafe_allow_html=True)
     with col2:
         if st.session_state.excel_data is not None:
             st.download_button(
-                label="📥 Download Excel",
+                label="Download Excel",
                 data=st.session_state.excel_data,
                 file_name=f"{uploaded_file.name.replace('.kmz', '')}_results.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -632,7 +486,8 @@ if st.session_state.results is not None:
     # Convert results to DataFrame
     df = pd.json_normalize(st.session_state.results, sep='_')
 
-    # ========== METRICS ==========
+    # Metrics row
+    st.markdown("<br>", unsafe_allow_html=True)
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -672,8 +527,8 @@ if st.session_state.results is not None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ========== TABS: Map / Data ==========
-    tab1, tab2 = st.tabs(["🗺️ Map View", "📋 Data Table"])
+    # Tabs: Map / Data
+    tab1, tab2 = st.tabs(["Map View", "Data Table"])
 
     with tab1:
         # Prepare map data
@@ -691,7 +546,6 @@ if st.session_state.results is not None:
                 lon_range = max(lons) - min(lons)
                 lat_range = max(lats) - min(lats)
                 max_range = max(lon_range, lat_range)
-                # Approximate zoom level
                 if max_range > 5:
                     zoom = 6
                 elif max_range > 2:
@@ -713,13 +567,12 @@ if st.session_state.results is not None:
                 if polygon_coords[0] != polygon_coords[-1]:
                     polygon_coords.append(polygon_coords[0])
 
-                # Polygon fill
                 polygon_layer = pdk.Layer(
                     "PolygonLayer",
                     data=[{"polygon": polygon_coords}],
                     get_polygon="polygon",
-                    get_fill_color=[255, 107, 0, 30],  # Orange with low opacity
-                    get_line_color=[255, 107, 0, 200],  # Orange border
+                    get_fill_color=[255, 107, 0, 30],
+                    get_line_color=[255, 107, 0, 200],
                     line_width_min_pixels=3,
                     pickable=False,
                 )
@@ -730,7 +583,7 @@ if st.session_state.results is not None:
                 "ScatterplotLayer",
                 data=map_df,
                 get_position=["longitude", "latitude"],
-                get_color=[255, 107, 0, 220],  # Paretoleads orange
+                get_color=[255, 107, 0, 220],
                 get_radius=500,
                 radius_min_pixels=5,
                 radius_max_pixels=15,
@@ -738,7 +591,7 @@ if st.session_state.results is not None:
             )
             layers.append(scatter_layer)
 
-            # Create deck with OpenStreetMap tiles (light style)
+            # Create map
             deck = pdk.Deck(
                 layers=layers,
                 initial_view_state=pdk.ViewState(
@@ -747,7 +600,7 @@ if st.session_state.results is not None:
                     zoom=zoom,
                     pitch=0,
                 ),
-                map_style="mapbox://styles/mapbox/light-v10",  # Light map style
+                map_style="mapbox://styles/mapbox/light-v10",
                 tooltip={"html": "<b>{name}</b><br/>Type: {type}", "style": {"backgroundColor": "#1A1A1A", "color": "white"}}
             )
 
@@ -757,7 +610,7 @@ if st.session_state.results is not None:
 
     with tab2:
         # Search filter
-        search_term = st.text_input("🔍 Search locations", placeholder="Type to filter by name...")
+        search_term = st.text_input("Search locations", placeholder="Type to filter by name...")
 
         # Prepare display dataframe
         display_columns = ['name', 'type', 'latitude', 'longitude', 'gpt_population', 'gpt_confidence']
@@ -789,25 +642,24 @@ if st.session_state.results is not None:
         )
 
 # ============================================================================
-# LOG SECTION (Discreet, at bottom) - Dark themed for visibility
+# PROCESSING LOG (at bottom, collapsed)
 # ============================================================================
 st.markdown("<br><br>", unsafe_allow_html=True)
-with st.expander("📋 Processing Log", expanded=False):
+with st.expander("Processing Log", expanded=False):
     all_messages = st.session_state.progress_messages + st.session_state.status_messages
     if all_messages:
-        # Show last 50 messages to keep it manageable
         log_text = "\n".join(all_messages[-50:])
         st.code(log_text, language="text")
         if len(all_messages) > 50:
             st.caption(f"Showing last 50 of {len(all_messages)} messages")
     else:
-        st.markdown("*Log will appear here once processing starts.*")
+        st.write("Log will appear here once processing starts.")
 
 # ============================================================================
 # FOOTER
 # ============================================================================
 st.markdown("""
 <div class="footer">
-    <p>Built by <a href="https://paretoleads.com" target="_blank">Paretoleads</a> • Powered by OpenStreetMap & OpenAI</p>
+    Built by <a href="https://paretoleads.com" target="_blank">Paretoleads</a> • Powered by OpenStreetMap & OpenAI
 </div>
 """, unsafe_allow_html=True)

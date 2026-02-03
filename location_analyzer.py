@@ -812,22 +812,61 @@ class LocationAnalyzer:
             if response is None:
                 raise ValueError("Gemini API returned None response")
             
+            # Check for blocked/filtered responses
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'finish_reason'):
+                    finish_reason = candidate.finish_reason
+                    # Check if response was blocked (finish_reason != STOP)
+                    if finish_reason and finish_reason != 1:  # 1 = STOP (normal completion)
+                        finish_reason_str = str(finish_reason)
+                        block_reason = f"Finish reason: {finish_reason_str}"
+                        if hasattr(response, 'prompt_feedback'):
+                            block_reason += f", Prompt feedback: {response.prompt_feedback}"
+                        raise ValueError(f"Gemini response blocked/filtered. {block_reason}")
+            
             # Check if response has text attribute
             if not hasattr(response, 'text'):
-                raise ValueError(f"Gemini API response missing 'text' attribute. Response type: {type(response)}, Response: {response}")
+                # Try alternative response attributes
+                response_str = str(response)
+                response_attrs = [attr for attr in dir(response) if not attr.startswith('_')]
+                raise ValueError(f"Gemini API response missing 'text' attribute. Response type: {type(response)}, Response attributes: {response_attrs}, Response str: {response_str[:500]}")
             
-            raw_response_content = response.text
+            # Try to get text - it might be None if blocked
+            try:
+                raw_response_content = response.text
+            except Exception as text_error:
+                # If .text access fails, check for blocked content
+                if hasattr(response, 'prompt_feedback'):
+                    feedback = response.prompt_feedback
+                    raise ValueError(f"Gemini response blocked. Prompt feedback: {feedback}. Text access error: {str(text_error)}")
+                raise ValueError(f"Failed to access response.text: {str(text_error)}")
             
             # Check if response text is empty or None
             if raw_response_content is None:
                 raise ValueError("Gemini API returned None for response.text")
             if not raw_response_content.strip():
-                raise ValueError("Gemini API returned empty response text")
+                # Log response object details for debugging
+                response_info = f"Response type: {type(response)}, Response dir: {[attr for attr in dir(response) if not attr.startswith('_')]}"
+                raise ValueError(f"Gemini API returned empty response text. {response_info}")
+            
+            # Log response length for debugging
+            if self.verbose:
+                try:
+                    self.status_callback(f"Gemini response received: {len(raw_response_content)} chars")
+                except:
+                    pass
                 
         except Exception as e:
             error_traceback = traceback.format_exc()
-            self._log(f"Error calling Gemini API: {str(e)}")
-            self._log(f"Full traceback:\n{error_traceback}")
+            error_msg = f"Error calling Gemini API: {str(e)}"
+            # Use status_callback instead of _log to avoid Streamlit context issues in threads
+            try:
+                self.status_callback(error_msg)
+                self.status_callback(f"Full traceback:\n{error_traceback}")
+            except:
+                print(error_msg)  # Fallback to print if Streamlit context unavailable
+                print(error_traceback)
             # Return error results for all locations in batch
             results_map = {}
             for i in range(len(locations_chunk)):
@@ -894,17 +933,34 @@ class LocationAnalyzer:
                     parsed_results_map[expected_idx] = {"population": None, "confidence": "Missing"}
 
         except json.JSONDecodeError as e:
-            self._log(f"Error: Failed to decode Gemini JSON response: {str(e)}")
+            # Log error without Streamlit UI updates (thread-safe)
+            error_msg = f"Error: Failed to decode Gemini JSON response: {str(e)}"
+            error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
+            # Use status_callback which is safer in threads, or just print
+            try:
+                self.status_callback(error_msg)
+            except:
+                print(error_msg)  # Fallback to print if Streamlit context unavailable
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
                  parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
         except ValueError as e:
-             self._log(f"Error processing Gemini response structure: {e}")
+             error_msg = f"Error processing Gemini response structure: {e}"
+             error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
+             try:
+                 self.status_callback(error_msg)
+             except:
+                 print(error_msg)
              for i in range(len(locations_chunk)):
                  original_idx = start_index + i
                  parsed_results_map[original_idx] = {"population": None, "confidence": "Format Error"}
         except Exception as e:
-            self._log(f"Error during Gemini response parsing: {str(e)}")
+            error_msg = f"Error during Gemini response parsing: {str(e)}"
+            error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
+            try:
+                self.status_callback(error_msg)
+            except:
+                print(error_msg)
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
                  parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
@@ -979,8 +1035,13 @@ class LocationAnalyzer:
                                         gemini_results_map = result
                                 except Exception as e:
                                     error_traceback = traceback.format_exc()
-                                    self._log(f"  Error in {provider} API call: {str(e)}")
-                                    self._log(f"  Full traceback:\n{error_traceback}")
+                                    # Use status_callback instead of _log to avoid Streamlit context issues in threads
+                                    try:
+                                        self.status_callback(f"  Error in {provider} API call: {str(e)}")
+                                        self.status_callback(f"  Full traceback:\n{error_traceback}")
+                                    except:
+                                        print(f"  Error in {provider} API call: {str(e)}")
+                                        print(f"  Full traceback:\n{error_traceback}")
                                     # Set empty result map for failed provider
                                     if provider == 'gpt':
                                         gpt_results_map = {}

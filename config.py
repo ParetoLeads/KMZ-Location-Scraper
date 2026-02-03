@@ -75,7 +75,7 @@ class Config:
     # Map Settings
     MAP_DEFAULT_ZOOM: int = 9
     MAP_DEFAULT_PITCH: int = 0
-    MAP_STYLE: str = "mapbox://styles/mapbox/streets-v11"  # Google Maps-like street view
+    MAP_STYLE: str = None  # None uses OpenStreetMap tiles (free, no API key required)
     
     # Progress Settings
     TOTAL_STAGES: int = 5  # KMZ, OSM, Hierarchy, GPT, Excel

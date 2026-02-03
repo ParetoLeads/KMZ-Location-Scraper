@@ -13,6 +13,14 @@ import re
 import traceback
 import math
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    genai = None
 
 from config import config
 from utils.exceptions import KMZParseError, OSMQueryError, GPTAPIError, ValidationError
@@ -22,7 +30,9 @@ from utils.cache import cache_osm_query, set_osm_query_cache, cache_hierarchy, s
 class LocationAnalyzer:
     def __init__(self, kmz_file: str, output_excel: str = None, 
                  verbose: bool = False,
-                 openai_api_key: str = "", use_gpt: bool = True, 
+                 openai_api_key: str = "", gemini_api_key: str = "",
+                 ai_provider: str = "openai",  # "openai", "gemini", or "both"
+                 use_gpt: bool = True, 
                  chunk_size: int = None,
                  max_locations: int = None,
                  pause_before_gpt: bool = None,
@@ -54,6 +64,8 @@ class LocationAnalyzer:
         self.output_excel = output_excel if output_excel else self._generate_output_filename(kmz_file)
         self.verbose = verbose or config.VERBOSE
         self.openai_api_key = openai_api_key
+        self.gemini_api_key = gemini_api_key
+        self.ai_provider = ai_provider.lower()  # "openai", "gemini", or "both"
         self.use_gpt = use_gpt and config.USE_GPT
         self.chunk_size = chunk_size if chunk_size is not None else config.DEFAULT_CHUNK_SIZE
         self.max_locations = max_locations if max_locations is not None and max_locations > 0 else config.DEFAULT_MAX_LOCATIONS
@@ -77,14 +89,38 @@ class LocationAnalyzer:
         # Store polygon points for map visualization
         self.polygon_points: Optional[List[Tuple[float, float]]] = None
         
-        # Initialize OpenAI client if using GPT
+        # Initialize AI clients
         self.gpt_client: Optional[OpenAI] = None
-        if self.use_gpt and self.openai_api_key:
-            self.gpt_client = OpenAI(api_key=self.openai_api_key)
-            self.gpt_model: str = config.GPT_MODEL
-            self.status_callback(f"GPT population estimation enabled using model: {self.gpt_model}")
-        elif self.use_gpt and not self.openai_api_key:
-            self.status_callback("Warning: GPT usage enabled, but no OpenAI API key found. Skipping GPT estimation.")
+        self.gemini_model = None
+        self.use_openai = False
+        self.use_gemini_flag = False
+        
+        # Initialize OpenAI client
+        if self.ai_provider in ["openai", "both"] and self.use_gpt and self.openai_api_key:
+            try:
+                self.gpt_client = OpenAI(api_key=self.openai_api_key)
+                self.gpt_model: str = config.GPT_MODEL
+                self.use_openai = True
+                self.status_callback(f"OpenAI GPT enabled using model: {self.gpt_model}")
+            except Exception as e:
+                self.status_callback(f"Warning: Failed to initialize OpenAI client: {str(e)}")
+        
+        # Initialize Gemini client
+        if self.ai_provider in ["gemini", "both"] and self.use_gpt and self.gemini_api_key:
+            if not GEMINI_AVAILABLE:
+                self.status_callback("Warning: google-generativeai package not installed. Install with: pip install google-generativeai")
+            else:
+                try:
+                    genai.configure(api_key=self.gemini_api_key)
+                    self.gemini_model = genai.GenerativeModel(config.GEMINI_MODEL)
+                    self.use_gemini_flag = True
+                    self.status_callback(f"Google Gemini enabled using model: {config.GEMINI_MODEL}")
+                except Exception as e:
+                    self.status_callback(f"Warning: Failed to initialize Gemini client: {str(e)}")
+        
+        # Warn if no AI provider is available
+        if self.use_gpt and not self.use_openai and not self.use_gemini_flag:
+            self.status_callback("Warning: AI population estimation enabled but no valid API keys found. Skipping AI estimation.")
             self.use_gpt = False
         
         # Check if KMZ file exists
@@ -752,24 +788,139 @@ class LocationAnalyzer:
 
         return parsed_results_map
     
+    def _get_gemini_populations_batch(self, locations_chunk: List[Dict], start_index: int) -> Dict[int, Dict]:
+        """Sends a batch of locations to Gemini and parses the JSON array response."""
+        prompt = self._prepare_batch_gpt_prompt(locations_chunk, start_index)
+        
+        try:
+            generation_config = {
+                "temperature": config.GEMINI_TEMPERATURE,
+                "top_p": config.GEMINI_TOP_P,
+                "top_k": config.GEMINI_TOP_K,
+                "max_output_tokens": config.GEMINI_MAX_OUTPUT_TOKENS,
+            }
+            
+            response = self.gemini_model.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
+            raw_response_content = response.text
+                
+        except Exception as e:
+            self._log(f"Error calling Gemini API: {str(e)}")
+            # Return error results for all locations in batch
+            results_map = {}
+            for i in range(len(locations_chunk)):
+                original_idx = start_index + i
+                results_map[original_idx] = {"population": None, "confidence": "API Error"}
+            return results_map
+
+        parsed_results_map = {}
+        try:
+            gpt_response_json = json.loads(raw_response_content)
+            
+            if not isinstance(gpt_response_json, list):
+                match = re.search(r'\[\s*\{.*?\}\s*\]', raw_response_content, re.DOTALL)
+                if match:
+                    json_text = match.group(0)
+                    try:
+                        gpt_response_json = json.loads(json_text)
+                        if not isinstance(gpt_response_json, list):
+                             raise ValueError("Regex extracted content is not a list.")
+                    except Exception as e_regex:
+                        raise ValueError("Response is not a valid JSON array, even after regex.")
+
+            processed_indices = set()
+            for item_data in gpt_response_json:
+                try:
+                    if not isinstance(item_data, dict):
+                        continue
+
+                    original_idx = item_data.get('index')
+                    population = item_data.get('population')
+                    confidence = item_data.get('confidence')
+
+                    if not isinstance(original_idx, int): 
+                        continue
+                         
+                    if not (start_index <= original_idx < start_index + len(locations_chunk)):
+                        continue
+                    
+                    pop_value = None
+                    if population is not None:
+                        try:
+                            pop_float = float(population)
+                            if pd.notna(pop_float):
+                                pop_value = int(pop_float) 
+                        except (ValueError, TypeError):
+                            pass
+                            
+                    conf_value = str(confidence) if confidence in ["High", "Medium", "Low"] else None
+
+                    if original_idx in processed_indices:
+                         continue
+                    parsed_results_map[original_idx] = {
+                        "population": pop_value, 
+                        "confidence": conf_value
+                    }
+                    processed_indices.add(original_idx)
+                
+                except Exception as e:
+                     pass
+
+            for i in range(len(locations_chunk)):
+                expected_idx = start_index + i
+                if expected_idx not in parsed_results_map:
+                    parsed_results_map[expected_idx] = {"population": None, "confidence": "Missing"}
+
+        except json.JSONDecodeError as e:
+            self._log(f"Error: Failed to decode Gemini JSON response: {str(e)}")
+            for i in range(len(locations_chunk)):
+                 original_idx = start_index + i
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
+        except ValueError as e:
+             self._log(f"Error processing Gemini response structure: {e}")
+             for i in range(len(locations_chunk)):
+                 original_idx = start_index + i
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "Format Error"}
+        except Exception as e:
+            self._log(f"Error during Gemini response parsing: {str(e)}")
+            for i in range(len(locations_chunk)):
+                 original_idx = start_index + i
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
+
+        return parsed_results_map
+    
     def estimate_populations(self, locations: List[Dict]) -> List[Dict]:
         """Get population estimates from GPT only."""
         self._log(f"\n--- Starting Population Estimation Phase for {len(locations)} locations ---")
         
-        # Initialize GPT population fields
+        # Initialize AI population fields for all providers
         for loc in locations:
             loc["gpt_population"] = None
             loc["gpt_confidence"] = None
+            loc["gemini_population"] = None
+            loc["gemini_confidence"] = None
+            loc["combined_population"] = None
+            loc["combined_confidence"] = None
             loc["final_population"] = 0
             loc["population_source"] = "None"
 
-        if self.use_gpt and self.gpt_client:
-            self._log(f"\n>>> Stage: Calculating population estimates with GPT ({self.gpt_model}) in batches of {self.chunk_size}...")
+        # Determine which AI provider(s) to use
+        use_openai = self.use_gpt and self.use_openai
+        use_gemini = self.use_gpt and self.use_gemini_flag
+        
+        if use_openai or use_gemini:
+            provider_name = []
+            if use_openai:
+                provider_name.append(f"OpenAI GPT ({self.gpt_model})")
+            if use_gemini:
+                provider_name.append(f"Google Gemini ({config.GEMINI_MODEL})")
+            provider_str = " + ".join(provider_name)
+            
+            self._log(f"\n>>> Stage: Calculating population estimates with {provider_str} in batches of {self.chunk_size}...")
             
             num_batches = ceil(len(locations) / self.chunk_size)
-            # For estimate calculation, convert GPT batches to equivalent of batch_size 10
-            # e.g., if chunk_size=10, then 1 GPT batch = 1 estimate batch
-            # if chunk_size=5, then 2 GPT batches = 1 estimate batch
             estimate_batch_size = 10
             gpt_batches_per_estimate_batch = estimate_batch_size / self.chunk_size
             
@@ -781,8 +932,46 @@ class LocationAnalyzer:
                 self._log(f"  Calculating population for batch {i+1}/{num_batches} ({len(batch_locations)} locations, {start_index}-{min(end_index, len(locations))-1})...")
 
                 try:
-                    gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
+                    gpt_results_map = {}
+                    gemini_results_map = {}
                     
+                    # Call APIs in parallel if both are selected, otherwise call sequentially
+                    if use_openai and use_gemini:
+                        # Parallel execution for both providers
+                        with ThreadPoolExecutor(max_workers=2) as executor:
+                            future_to_provider = {}
+                            if use_openai:
+                                future = executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)
+                                future_to_provider[future] = 'gpt'
+                            if use_gemini:
+                                future = executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)
+                                future_to_provider[future] = 'gemini'
+                            
+                            # Collect results as they complete
+                            for future in as_completed(future_to_provider.keys()):
+                                provider = future_to_provider[future]
+                                try:
+                                    result = future.result()
+                                    # Store result in appropriate map
+                                    if provider == 'gpt':
+                                        gpt_results_map = result
+                                    elif provider == 'gemini':
+                                        gemini_results_map = result
+                                except Exception as e:
+                                    self._log(f"  Error in {provider} API call: {str(e)}")
+                                    # Set empty result map for failed provider
+                                    if provider == 'gpt':
+                                        gpt_results_map = {}
+                                    elif provider == 'gemini':
+                                        gemini_results_map = {}
+                    else:
+                        # Sequential execution for single provider
+                        if use_openai:
+                            gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
+                        if use_gemini:
+                            gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
+                    
+                    # Store GPT results
                     success_count = 0
                     for original_idx, result_data in gpt_results_map.items():
                         if 0 <= original_idx < len(locations): 
@@ -791,17 +980,32 @@ class LocationAnalyzer:
                             if result_data.get("population") is not None:
                                 success_count += 1
                     
-                    # Calculate completed estimate batches (hierarchy is done, so it's total_batches)
+                    # Store Gemini results
+                    gemini_success_count = 0
+                    for original_idx, result_data in gemini_results_map.items():
+                        if 0 <= original_idx < len(locations): 
+                            locations[original_idx]["gemini_population"] = result_data.get("population")
+                            locations[original_idx]["gemini_confidence"] = result_data.get("confidence")
+                            if result_data.get("population") is not None:
+                                gemini_success_count += 1
+                    
+                    # Update success count message
+                    if use_openai and use_gemini:
+                        total_success = len([idx for idx in range(start_index, min(end_index, len(locations))) 
+                                            if (locations[idx].get("gpt_population") is not None) or 
+                                               (locations[idx].get("gemini_population") is not None)])
+                        self._log(f"  Batch {i+1}/{num_batches} complete: GPT={success_count}, Gemini={gemini_success_count}, Total={total_success}/{len(batch_locations)} locations got population data")
+                    else:
+                        self._log(f"  Batch {i+1}/{num_batches} complete: {success_count}/{len(batch_locations)} locations got population data")
+                    
+                    # Calculate completed estimate batches
                     total_estimate_batches = ceil(len(locations) / estimate_batch_size)
                     hierarchy_completed = total_estimate_batches
-                    # Convert GPT batch number to estimate batch number
                     gpt_completed_estimate_batches = ceil((i + 1) / gpt_batches_per_estimate_batch)
-                    # Update estimate after each batch
                     estimated_time = self._estimate_processing_time(len(locations), hierarchy_completed, gpt_completed_estimate_batches)
-                    self._log(f"  Batch {i+1}/{num_batches} complete: {success_count}/{len(batch_locations)} locations got population data")
                     self._log(f"Estimated remaining time: {estimated_time}")
                 except Exception as e:
-                    self._log(f"  Error processing GPT batch {i+1}: {str(e)}")
+                    self._log(f"  Error processing AI batch {i+1}: {str(e)}")
                     for idx in range(start_index, min(end_index, len(locations))):
                          if 0 <= idx < len(locations):
                             locations[idx]["gpt_confidence"] = "Error"
@@ -810,20 +1014,52 @@ class LocationAnalyzer:
                 if i < num_batches - 1:  # Don't sleep after last batch
                     time.sleep(config.GPT_BATCH_DELAY)
 
-            self._log("<<< Stage: Finished fetching GPT data.")
+            self._log("<<< Stage: Finished fetching AI population data.")
         else:
-             self._log("\n>>> Stage: Skipping GPT population fetch (use_gpt is False or client not initialized).")
+             self._log("\n>>> Stage: Skipping AI population fetch (use_gpt is False or no AI clients initialized).")
 
-        self._log("\n>>> Stage: Assigning Final Population (GPT only)...")
+        self._log("\n>>> Stage: Calculating Combined Population and Assigning Final Values...")
         assigned_count = 0
         for i, loc in enumerate(locations):
             gpt_pop = loc.get("gpt_population")
             gpt_conf = loc.get("gpt_confidence")
+            gemini_pop = loc.get("gemini_population")
+            gemini_conf = loc.get("gemini_confidence")
             
-            # Use GPT population if available and confidence is High or Medium
-            if gpt_pop is not None and gpt_pop > 0 and gpt_conf in ["High", "Medium"]:
-                loc["final_population"] = gpt_pop
-                loc["population_source"] = "GPT"
+            # Calculate combined population
+            combined_pop, combined_conf = self._calculate_combined_population(
+                gpt_pop, gpt_conf, gemini_pop, gemini_conf
+            )
+            
+            # Store combined results
+            loc["combined_population"] = combined_pop
+            loc["combined_confidence"] = combined_conf
+            
+            # Use combined population for final if available and confidence is High or Medium
+            # Otherwise fall back to individual results
+            final_pop = None
+            final_source = "None"
+            
+            if combined_pop is not None and combined_pop > 0 and combined_conf in ["High", "Medium"]:
+                final_pop = combined_pop
+                if self.use_openai and self.use_gemini_flag:
+                    final_source = "Combined (GPT + Gemini)"
+                elif self.use_openai:
+                    final_source = "OpenAI GPT"
+                elif self.use_gemini_flag:
+                    final_source = "Google Gemini"
+                else:
+                    final_source = "AI"
+            elif gpt_pop is not None and gpt_pop > 0 and gpt_conf in ["High", "Medium"]:
+                final_pop = gpt_pop
+                final_source = "OpenAI GPT"
+            elif gemini_pop is not None and gemini_pop > 0 and gemini_conf in ["High", "Medium"]:
+                final_pop = gemini_pop
+                final_source = "Google Gemini"
+            
+            if final_pop is not None:
+                loc["final_population"] = final_pop
+                loc["population_source"] = final_source
                 assigned_count += 1
         
         self._log(f"<<< Stage: Finished assigning final population values. Assigned population for {assigned_count}/{len(locations)} locations.")
@@ -831,6 +1067,65 @@ class LocationAnalyzer:
         self._log("--- Population Estimation Phase Complete ---")
 
         return locations
+    
+    def _calculate_combined_population(self, gpt_pop: Optional[int], gpt_conf: Optional[str], 
+                                       gemini_pop: Optional[int], gemini_conf: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
+        """Calculate weighted combined population based on confidence levels.
+        
+        Args:
+            gpt_pop: GPT population estimate
+            gpt_conf: GPT confidence level (High, Medium, Low, or None)
+            gemini_pop: Gemini population estimate
+            gemini_conf: Gemini confidence level (High, Medium, Low, or None)
+        
+        Returns:
+            Tuple of (combined_population, combined_confidence)
+        """
+        # Confidence weights: High=3, Medium=2, Low=1, None/Missing=0
+        confidence_weights = {"High": 3, "Medium": 2, "Low": 1}
+        
+        def get_weight(conf: Optional[str]) -> int:
+            if conf and conf in confidence_weights:
+                return confidence_weights[conf]
+            return 0
+        
+        gpt_weight = get_weight(gpt_conf)
+        gemini_weight = get_weight(gemini_conf)
+        
+        # If only one result is available, use that one
+        if gpt_pop is not None and gemini_pop is None:
+            return gpt_pop, gpt_conf
+        elif gemini_pop is not None and gpt_pop is None:
+            return gemini_pop, gemini_conf
+        elif gpt_pop is None and gemini_pop is None:
+            return None, None
+        
+        # Both results available - calculate weighted average
+        total_weight = gpt_weight + gemini_weight
+        
+        if total_weight == 0:
+            # Both have no confidence, use simple average
+            combined_pop = int((gpt_pop + gemini_pop) / 2)
+            # Use higher confidence if available, otherwise None
+            combined_conf = gpt_conf if gpt_conf else gemini_conf
+        else:
+            # Weighted average
+            combined_pop = int((gpt_pop * gpt_weight + gemini_pop * gemini_weight) / total_weight)
+            # Combined confidence is the highest available
+            if gpt_weight > gemini_weight:
+                combined_conf = gpt_conf
+            elif gemini_weight > gpt_weight:
+                combined_conf = gemini_conf
+            else:
+                # Same weight, prefer higher confidence level
+                if gpt_conf == "High" or gemini_conf == "High":
+                    combined_conf = "High"
+                elif gpt_conf == "Medium" or gemini_conf == "Medium":
+                    combined_conf = "Medium"
+                else:
+                    combined_conf = "Low"
+        
+        return combined_pop, combined_conf
     
     def save_to_excel(self, all_locations=None, filename=None) -> BytesIO:
         """Save final analysis results to Excel with 2 sheets: Full Data and Clean Data."""
@@ -847,14 +1142,18 @@ class LocationAnalyzer:
                  
             df = pd.json_normalize(all_locations, sep='_')
             
-            # Full Data Sheet - Core columns only (no final_population/population_source)
+            # Full Data Sheet - Include all population columns
             final_columns = [
                 'name',
                 'type',
                 'latitude',
                 'longitude',
                 'gpt_population',
-                'gpt_confidence'
+                'gpt_confidence',
+                'gemini_population',
+                'gemini_confidence',
+                'combined_population',
+                'combined_confidence'
             ]
             
             for col in final_columns:
@@ -864,14 +1163,21 @@ class LocationAnalyzer:
             df_full = df[final_columns].copy()
             df_full.columns = [col.replace('admin_hierarchy_', '') for col in df_full.columns]
             
-            numeric_cols = ['gpt_population', 'containing_level']
+            numeric_cols = ['gpt_population', 'gemini_population', 'combined_population', 'containing_level']
             for col in numeric_cols:
                 if col in df_full.columns:
                     df_full[col] = pd.to_numeric(df_full[col], errors='coerce').astype('Float64')
             
             # Clean Data Sheet - Filtered to >10,000 population
-            # Only Location Name and Population columns (using gpt_population)
-            df_clean = df_full[['name', 'gpt_population']].copy()
+            # Use combined_population if available, otherwise fall back to gpt_population or gemini_population
+            pop_column = 'combined_population'
+            if pop_column not in df_full.columns or df_full[pop_column].isna().all():
+                if 'gpt_population' in df_full.columns and not df_full['gpt_population'].isna().all():
+                    pop_column = 'gpt_population'
+                elif 'gemini_population' in df_full.columns and not df_full['gemini_population'].isna().all():
+                    pop_column = 'gemini_population'
+            
+            df_clean = df_full[['name', pop_column]].copy()
             df_clean.columns = ['Location Name', 'Population']
             
             # Filter to only locations with population > threshold

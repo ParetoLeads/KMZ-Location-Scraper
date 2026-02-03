@@ -417,33 +417,65 @@ if st.session_state.results is not None:
 # Debug section for testing API connections
 st.divider()
 with st.expander("🔧 Debug: Test API Connections", expanded=False):
-    st.subheader("Test Gemini API Connection")
-    if st.button("Test Gemini API"):
-        gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
-        if not gemini_api_key:
-            st.error("⚠️ Gemini API key not found in secrets.")
-        else:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=gemini_api_key)
-                model = genai.GenerativeModel(config.GEMINI_MODEL)
-                
-                # Simple test prompt
-                test_prompt = "What is 2+2? Respond with just the number."
-                response = model.generate_content(test_prompt)
-                
-                if response and hasattr(response, 'text') and response.text:
-                    st.success(f"✅ Gemini API connection successful!")
-                    st.info(f"Model: {config.GEMINI_MODEL}")
-                    st.info(f"Test response: {response.text}")
-                else:
-                    st.error(f"❌ Gemini API returned invalid response: {response}")
-            except Exception as e:
-                import traceback
-                error_traceback = traceback.format_exc()
-                st.error(f"❌ Gemini API test failed: {str(e)}")
-                with st.expander("Full Error Details"):
-                    st.code(error_traceback, language=None)
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+    
+    if not gemini_api_key:
+        st.error("⚠️ Gemini API key not found in secrets.")
+    else:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("List Available Models")
+            if st.button("List Gemini Models"):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=gemini_api_key)
+                    
+                    models = genai.list_models()
+                    available_models = []
+                    for model in models:
+                        if 'generateContent' in model.supported_generation_methods:
+                            available_models.append(model.name.replace('models/', ''))
+                    
+                    if available_models:
+                        st.success(f"✅ Found {len(available_models)} available model(s):")
+                        for model_name in available_models:
+                            st.code(model_name, language=None)
+                    else:
+                        st.warning("⚠️ No models found with generateContent support.")
+                except Exception as e:
+                    import traceback
+                    error_traceback = traceback.format_exc()
+                    st.error(f"❌ Failed to list models: {str(e)}")
+                    with st.expander("Full Error Details"):
+                        st.code(error_traceback, language=None)
+        
+        with col2:
+            st.subheader("Test Gemini API Connection")
+            if st.button("Test Gemini API"):
+                try:
+                    import google.generativeai as genai
+                    genai.configure(api_key=gemini_api_key)
+                    model = genai.GenerativeModel(config.GEMINI_MODEL)
+                    
+                    # Simple test prompt
+                    test_prompt = "What is 2+2? Respond with just the number."
+                    response = model.generate_content(test_prompt)
+                    
+                    if response and hasattr(response, 'text') and response.text:
+                        st.success(f"✅ Gemini API connection successful!")
+                        st.info(f"Model: {config.GEMINI_MODEL}")
+                        st.info(f"Test response: {response.text}")
+                    else:
+                        st.error(f"❌ Gemini API returned invalid response: {response}")
+                except Exception as e:
+                    import traceback
+                    error_traceback = traceback.format_exc()
+                    st.error(f"❌ Gemini API test failed: {str(e)}")
+                    st.info(f"💡 Current model: {config.GEMINI_MODEL}")
+                    st.info("💡 Try clicking 'List Gemini Models' to see available models.")
+                    with st.expander("Full Error Details"):
+                        st.code(error_traceback, language=None)
 
 # Collapsible log section at bottom (closed by default)
 st.divider()

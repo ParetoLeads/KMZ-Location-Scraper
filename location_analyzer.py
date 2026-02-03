@@ -116,7 +116,10 @@ class LocationAnalyzer:
                     self.use_gemini_flag = True
                     self.status_callback(f"Google Gemini enabled using model: {config.GEMINI_MODEL}")
                 except Exception as e:
-                    self.status_callback(f"Warning: Failed to initialize Gemini client: {str(e)}")
+                    error_traceback = traceback.format_exc()
+                    error_msg = f"Warning: Failed to initialize Gemini client: {str(e)}\n{error_traceback}"
+                    self.status_callback(error_msg)
+                    self._log(error_msg)
         
         # Warn if no AI provider is available
         if self.use_gpt and not self.use_openai and not self.use_gemini_flag:
@@ -804,10 +807,27 @@ class LocationAnalyzer:
                 prompt,
                 generation_config=generation_config
             )
+            
+            # Check if response is valid
+            if response is None:
+                raise ValueError("Gemini API returned None response")
+            
+            # Check if response has text attribute
+            if not hasattr(response, 'text'):
+                raise ValueError(f"Gemini API response missing 'text' attribute. Response type: {type(response)}, Response: {response}")
+            
             raw_response_content = response.text
+            
+            # Check if response text is empty or None
+            if raw_response_content is None:
+                raise ValueError("Gemini API returned None for response.text")
+            if not raw_response_content.strip():
+                raise ValueError("Gemini API returned empty response text")
                 
         except Exception as e:
+            error_traceback = traceback.format_exc()
             self._log(f"Error calling Gemini API: {str(e)}")
+            self._log(f"Full traceback:\n{error_traceback}")
             # Return error results for all locations in batch
             results_map = {}
             for i in range(len(locations_chunk)):
@@ -958,7 +978,9 @@ class LocationAnalyzer:
                                     elif provider == 'gemini':
                                         gemini_results_map = result
                                 except Exception as e:
+                                    error_traceback = traceback.format_exc()
                                     self._log(f"  Error in {provider} API call: {str(e)}")
+                                    self._log(f"  Full traceback:\n{error_traceback}")
                                     # Set empty result map for failed provider
                                     if provider == 'gpt':
                                         gpt_results_map = {}

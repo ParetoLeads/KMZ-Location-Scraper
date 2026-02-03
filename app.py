@@ -414,6 +414,7 @@ if st.session_state.results is not None:
         layers.append(text_layer)
         
         # Create the deck with HTML tooltips
+        # Use OpenStreetMap tiles when map_style is None (no API key required)
         deck = pdk.Deck(
             layers=layers,
             initial_view_state=pdk.ViewState(
@@ -422,7 +423,7 @@ if st.session_state.results is not None:
                 zoom=config.MAP_DEFAULT_ZOOM,
                 pitch=config.MAP_DEFAULT_PITCH,
             ),
-            map_style=config.MAP_STYLE,
+            map_style=config.MAP_STYLE,  # None defaults to OpenStreetMap tiles
             tooltip={
                 "html": "<b>{name}</b>" + ("<br/>Type: {type}" if 'type' in map_columns else "") + "<br/>Coordinates: {latitude:.4f}, {longitude:.4f}",
                 "style": {

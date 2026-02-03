@@ -1294,11 +1294,11 @@ class LocationAnalyzer:
             # Reset index
             df_clean = df_clean.reset_index(drop=True)
             
-            # Create Excel with 2 sheets
+            # Create Excel with 2 sheets (Clean Data first, Full Data second)
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_full.to_excel(writer, sheet_name='Full Data', index=False)
                 df_clean.to_excel(writer, sheet_name='Clean Data', index=False)
+                df_full.to_excel(writer, sheet_name='Full Data', index=False)
             
             output.seek(0)
             

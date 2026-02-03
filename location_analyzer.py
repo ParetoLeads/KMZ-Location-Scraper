@@ -654,6 +654,7 @@ class LocationAnalyzer:
             "and ensure you are retrieving the population for the correct place.**\n\n"
             "Provide your answer ONLY as a single, valid JSON **array**. Each object in the array must correspond to one location from the input list below, respecting the original order.\n"
             "Do not include any introductory text, explanations, or summaries before or after the JSON array.\n"
+            "Do not wrap the JSON in markdown code blocks (no ```json or ``` markers). Provide raw JSON only.\n"
             "Each object in the JSON array must contain:\n"
             "- 'index': The original integer index provided for the location.\n"
             "- 'population': The estimated population as an integer. If the population is unknown or cannot be reliably estimated, use `null`.\n"
@@ -823,7 +824,17 @@ class LocationAnalyzer:
                         block_reason = f"Finish reason: {finish_reason_str}"
                         if hasattr(response, 'prompt_feedback'):
                             block_reason += f", Prompt feedback: {response.prompt_feedback}"
-                        raise ValueError(f"Gemini response blocked/filtered. {block_reason}")
+                        # Log but don't raise - return empty results instead
+                        try:
+                            self.status_callback(f"Gemini response blocked/filtered for batch. {block_reason}. Continuing with GPT results only.")
+                        except:
+                            print(f"Gemini response blocked/filtered for batch. {block_reason}")
+                        # Return empty results map instead of raising
+                        results_map = {}
+                        for i in range(len(locations_chunk)):
+                            original_idx = start_index + i
+                            results_map[original_idx] = {"population": None, "confidence": "Blocked"}
+                        return results_map
             
             # Check if response has text attribute
             if not hasattr(response, 'text'):
@@ -876,6 +887,14 @@ class LocationAnalyzer:
 
         parsed_results_map = {}
         try:
+            # Strip markdown code blocks if present
+            if raw_response_content.strip().startswith('```'):
+                # Remove opening ```json or ```
+                raw_response_content = re.sub(r'^```(?:json)?\s*\n?', '', raw_response_content, flags=re.MULTILINE)
+                # Remove closing ```
+                raw_response_content = re.sub(r'\n?```\s*$', '', raw_response_content, flags=re.MULTILINE)
+                raw_response_content = raw_response_content.strip()
+            
             gpt_response_json = json.loads(raw_response_content)
             
             if not isinstance(gpt_response_json, list):

@@ -297,7 +297,7 @@ class ProgressUI:
         """Mark progress as complete."""
         self.progress_bar.progress(1.0)
         with self.stage_text:
-            st.markdown("### Analysis complete!")
+            st.markdown("### Done — 100% complete")
         with self.metrics:
             pass  # Clear metrics
         with self.status_text:

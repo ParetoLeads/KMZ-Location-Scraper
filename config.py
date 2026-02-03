@@ -60,6 +60,14 @@ class Config:
     GPT_MODEL: str = os.getenv('GPT_MODEL', 'gpt-4-turbo')
     GPT_TEMPERATURE: float = 0.1
     
+    # Gemini Settings
+    USE_GEMINI: bool = os.getenv('USE_GEMINI', 'True').lower() == 'true'
+    GEMINI_MODEL: str = os.getenv('GEMINI_MODEL', 'gemini-1.5-pro')
+    GEMINI_TEMPERATURE: float = float(os.getenv('GEMINI_TEMPERATURE', '0.2'))
+    GEMINI_TOP_P: float = float(os.getenv('GEMINI_TOP_P', '0.95'))
+    GEMINI_TOP_K: int = int(os.getenv('GEMINI_TOP_K', '40'))
+    GEMINI_MAX_OUTPUT_TOKENS: int = int(os.getenv('GEMINI_MAX_OUTPUT_TOKENS', '4096'))
+    
     # UI Settings
     MAX_FILE_SIZE_MB: int = int(os.getenv('MAX_FILE_SIZE_MB', '1'))
     MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -67,7 +75,7 @@ class Config:
     # Map Settings
     MAP_DEFAULT_ZOOM: int = 9
     MAP_DEFAULT_PITCH: int = 0
-    MAP_STYLE: str = "mapbox://styles/mapbox/dark-v10"
+    MAP_STYLE: str = "mapbox://styles/mapbox/streets-v11"  # Google Maps-like street view
     
     # Progress Settings
     TOTAL_STAGES: int = 5  # KMZ, OSM, Hierarchy, GPT, Excel

@@ -18,79 +18,9 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Force dark mode with comprehensive CSS
+# Light mode styling
 st.markdown("""
     <style>
-    /* Force dark mode on root and all containers */
-    html, body, #root, .stApp {
-        background-color: #0e1117 !important;
-        color: #fafafa !important;
-    }
-    
-    /* Main app container */
-    .stApp {
-        background-color: #0e1117 !important;
-    }
-    
-    /* Main content area */
-    .main .block-container {
-        background-color: #0e1117 !important;
-        color: #fafafa !important;
-    }
-    
-    /* All text elements */
-    .stApp, .stApp *, p, h1, h2, h3, h4, h5, h6, span, div, label {
-        color: #fafafa !important;
-    }
-    
-    /* File uploader */
-    .stFileUploader, .stFileUploader > div {
-        background-color: #262730 !important;
-        border-color: #444 !important;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        background-color: #1f77b4 !important;
-        color: white !important;
-        border-color: #1f77b4 !important;
-    }
-    .stButton > button:hover {
-        background-color: #1a6ba3 !important;
-        border-color: #1a6ba3 !important;
-    }
-    
-    /* Info boxes and alerts */
-    .stAlert, .stAlert > div {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-    }
-    
-    /* Input fields */
-    .stTextInput > div > div > input,
-    .stTextArea > div > div > textarea {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border-color: #444 !important;
-    }
-    
-    /* Select boxes */
-    .stSelectbox > div > div {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-    }
-    
-    /* Progress bars */
-    .stProgress > div > div > div {
-        background-color: #262730 !important;
-    }
-    
-    /* Code blocks */
-    .stCodeBlock, code {
-        background-color: #1a1a1a !important;
-        color: #fafafa !important;
-    }
-    
     /* Headers */
     .main-header {
         font-size: 2.5rem;
@@ -100,88 +30,20 @@ st.markdown("""
     }
     .sub-header {
         font-size: 1.2rem;
-        color: #fafafa !important;
+        color: #333 !important;
         margin-bottom: 2rem;
-    }
-    .status-box {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #262730 !important;
-        margin: 1rem 0;
-    }
-    
-    /* Sidebar */
-    [data-testid="stSidebar"], [data-testid="stSidebar"] > div {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-    }
-    
-    /* Metrics */
-    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
-        color: #fafafa !important;
-    }
-    
-    /* Dataframe */
-    .stDataFrame, .stDataFrame > div {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-    }
-    
-    /* Tables */
-    table, thead, tbody, tr, td, th {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-        border-color: #444 !important;
-    }
-    
-    /* Expanders */
-    .streamlit-expanderHeader {
-        background-color: #262730 !important;
-        color: #fafafa !important;
-    }
-    
-    /* Dividers */
-    hr {
-        border-color: #444 !important;
-    }
-    
-    /* Override any light mode classes */
-    [data-baseweb="light"] {
-        background-color: #0e1117 !important;
-    }
-    
-    /* Force dark theme attribute */
-    body {
-        color-scheme: dark !important;
-    }
-    
-    /* Override Streamlit's theme detection */
-    [data-baseweb="light"] {
-        background-color: #0e1117 !important;
-    }
-    
-    /* Ensure all Streamlit widgets are dark */
-    .stApp [data-baseweb] {
-        background-color: #0e1117 !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # Title
 st.markdown('<h1 class="main-header">🗺️ KMZ Location Scraper</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header" style="color: #ffffff; text-align: center;">Extract locations from KMZ files and estimate populations using OpenStreetMap and GPT</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-header" style="text-align: center;">Extract locations from KMZ files and estimate populations using OpenStreetMap and GPT</p>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: #666; font-size: 0.85rem; margin-top: -0.5rem;">Developed with 💡 by Paretoleads.com</p>', unsafe_allow_html=True)
 
 # Configuration is now managed by config module
-
-# AI Provider Selection
-st.subheader("🤖 AI Model Selection")
-ai_provider = st.radio(
-    "Choose AI model for population estimation:",
-    ["OpenAI GPT", "Google Gemini", "Both (Compare Results)"],
-    horizontal=True,
-    help="Select which AI model to use for estimating population. 'Both' will use both models and compare results."
-)
+# Always use both AI providers
+ai_provider = "Both (Compare Results)"
 
 # Main content area
 uploaded_file = st.file_uploader(
@@ -236,31 +98,30 @@ if uploaded_file is not None:
             
             if kmz_valid:
                 try:
-                    # Get API keys based on selected provider
-                    openai_api_key = ""
-                    gemini_api_key = ""
-                    provider_value = "openai"  # default
+                    # Always use both providers
+                    provider_value = "both"
                     api_keys_valid = True
                     
-                    if ai_provider == "OpenAI GPT" or ai_provider == "Both (Compare Results)":
-                        openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
-                        if not openai_api_key:
-                            st.error("⚠️ OpenAI API key not found in secrets. Please add OPENAI_API_KEY to your Streamlit secrets.")
+                    # Get OpenAI API key
+                    openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
+                    if not openai_api_key:
+                        st.error("⚠️ OpenAI API key not found in secrets. Please add OPENAI_API_KEY to your Streamlit secrets.")
+                        st.session_state.processing = False
+                        if os.path.exists(tmp_kmz_path):
+                            os.unlink(tmp_kmz_path)
+                        api_keys_valid = False
+                    else:
+                        try:
+                            validate_api_key(openai_api_key)
+                        except ValidationError as e:
+                            st.error(f"⚠️ {str(e)}")
                             st.session_state.processing = False
                             if os.path.exists(tmp_kmz_path):
                                 os.unlink(tmp_kmz_path)
                             api_keys_valid = False
-                        else:
-                            try:
-                                validate_api_key(openai_api_key)
-                            except ValidationError as e:
-                                st.error(f"⚠️ {str(e)}")
-                                st.session_state.processing = False
-                                if os.path.exists(tmp_kmz_path):
-                                    os.unlink(tmp_kmz_path)
-                                api_keys_valid = False
                     
-                    if api_keys_valid and (ai_provider == "Google Gemini" or ai_provider == "Both (Compare Results)"):
+                    # Get Gemini API key
+                    if api_keys_valid:
                         gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
                         if not gemini_api_key:
                             st.error("⚠️ Gemini API key not found in secrets. Please add GEMINI_API_KEY to your Streamlit secrets.")
@@ -268,14 +129,6 @@ if uploaded_file is not None:
                             if os.path.exists(tmp_kmz_path):
                                 os.unlink(tmp_kmz_path)
                             api_keys_valid = False
-                    
-                    # Set provider value
-                    if ai_provider == "OpenAI GPT":
-                        provider_value = "openai"
-                    elif ai_provider == "Google Gemini":
-                        provider_value = "gemini"
-                    elif ai_provider == "Both (Compare Results)":
-                        provider_value = "both"
                     
                     # Check if at least one API key is available
                     if api_keys_valid and not openai_api_key and not gemini_api_key:
@@ -286,9 +139,7 @@ if uploaded_file is not None:
                         api_keys_valid = False
                     
                     # If we have valid keys, proceed
-                    if api_keys_valid and ((ai_provider == "OpenAI GPT" and openai_api_key) or \
-                       (ai_provider == "Google Gemini" and gemini_api_key) or \
-                       (ai_provider == "Both (Compare Results)" and (openai_api_key or gemini_api_key))):
+                    if api_keys_valid and (openai_api_key or gemini_api_key):
                         # Create progress containers
                         progress_container = st.container()
                         status_container = st.container()

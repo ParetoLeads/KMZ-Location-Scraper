@@ -62,7 +62,7 @@ class Config:
     
     # Gemini Settings
     USE_GEMINI: bool = os.getenv('USE_GEMINI', 'True').lower() == 'true'
-    GEMINI_MODEL: str = os.getenv('GEMINI_MODEL', 'gemini-1.5-pro')
+    GEMINI_MODEL: str = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')  # Updated to gemini-2.5-pro
     GEMINI_TEMPERATURE: float = float(os.getenv('GEMINI_TEMPERATURE', '0.2'))
     GEMINI_TOP_P: float = float(os.getenv('GEMINI_TOP_P', '0.95'))
     GEMINI_TOP_K: int = int(os.getenv('GEMINI_TOP_K', '40'))

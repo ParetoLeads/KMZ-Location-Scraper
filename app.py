@@ -33,6 +33,17 @@ st.markdown("""
         color: #333 !important;
         margin-bottom: 2rem;
     }
+    /* Orange download button */
+    .stDownloadButton > button {
+        background-color: #FF5733 !important;
+        color: white !important;
+        border-color: #FF5733 !important;
+        font-weight: bold !important;
+    }
+    .stDownloadButton > button:hover {
+        background-color: #E64A2E !important;
+        border-color: #E64A2E !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -328,11 +339,24 @@ if st.session_state.results is not None:
             clean_count = 0
         st.metric("Population > 10K", clean_count)
     
+    # Download button
+    if st.session_state.excel_data is not None:
+        st.download_button(
+            label="📥 Download Excel File",
+            data=st.session_state.excel_data,
+            file_name=f"{uploaded_file.name.replace('.kmz', '')}_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width='stretch'
+        )
+    
     # Display map with locations and polygon boundary
     st.subheader("🗺️ Location Map")
     
     # Prepare location data for map
-    map_df = df[['latitude', 'longitude', 'name']].dropna()
+    map_columns = ['latitude', 'longitude', 'name']
+    if 'type' in df.columns:
+        map_columns.append('type')
+    map_df = df[map_columns].dropna(subset=['latitude', 'longitude', 'name'])
     
     if len(map_df) > 0:
         # Calculate center of locations
@@ -361,20 +385,35 @@ if st.session_state.results is not None:
             )
             layers.append(polygon_layer)
         
-        # Add scatter plot layer for locations
+        # Add scatter plot layer for locations with larger, more visible markers
         scatter_layer = pdk.Layer(
             "ScatterplotLayer",
             data=map_df,
             get_position=["longitude", "latitude"],
-            get_color=[255, 87, 51, 200],  # Orange-red
-            get_radius=300,
-            radius_min_pixels=3,
-            radius_max_pixels=10,
+            get_color=[255, 87, 51, 220],  # Orange-red with higher opacity
+            get_radius=500,
+            radius_min_pixels=5,
+            radius_max_pixels=15,
             pickable=True,
         )
         layers.append(scatter_layer)
         
-        # Create the deck
+        # Add TextLayer to display location names on the map
+        text_layer = pdk.Layer(
+            "TextLayer",
+            data=map_df,
+            get_position=["longitude", "latitude"],
+            get_text="name",
+            get_color=[0, 0, 0, 255],  # Black text
+            get_size=12,
+            get_angle=0,
+            get_text_anchor="middle",
+            get_alignment_baseline="center",
+            pickable=True,
+        )
+        layers.append(text_layer)
+        
+        # Create the deck with HTML tooltips
         deck = pdk.Deck(
             layers=layers,
             initial_view_state=pdk.ViewState(
@@ -384,10 +423,18 @@ if st.session_state.results is not None:
                 pitch=config.MAP_DEFAULT_PITCH,
             ),
             map_style=config.MAP_STYLE,
-            tooltip={"text": "{name}"}
+            tooltip={
+                "html": "<b>{name}</b>" + ("<br/>Type: {type}" if 'type' in map_columns else "") + "<br/>Coordinates: {latitude:.4f}, {longitude:.4f}",
+                "style": {
+                    "backgroundColor": "#1A1A1A",
+                    "color": "white",
+                    "fontSize": "12px",
+                    "padding": "8px"
+                }
+            }
         )
         
-        st.pydeck_chart(deck)
+        st.pydeck_chart(deck, use_container_width=True)
     
     # Add search/filter
     st.subheader("Location Data")
@@ -403,16 +450,6 @@ if st.session_state.results is not None:
         height=400,
         hide_index=True
     )
-    
-    # Download button
-    if st.session_state.excel_data is not None:
-        st.download_button(
-            label="📥 Download Excel File",
-            data=st.session_state.excel_data,
-            file_name=f"{uploaded_file.name.replace('.kmz', '')}_results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width='stretch'
-        )
 
 # Debug section for testing API connections
 st.divider()

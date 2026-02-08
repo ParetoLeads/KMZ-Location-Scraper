@@ -107,7 +107,7 @@ def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, popula
 
 # Helper function to clear processing state
 def clear_processing_state():
-    """Clear all processing state."""
+    """Clear all processing state. Does not clear results or excel_data."""
     st.session_state.processing = False
     st.session_state.processing_stage = None
     st.session_state.processing_locations = None
@@ -117,9 +117,31 @@ def clear_processing_state():
     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
         try:
             os.unlink(st.session_state.tmp_kmz_path)
-        except:
+        except Exception:
             pass
     st.session_state.tmp_kmz_path = None
+
+
+def create_analyzer_from_state(progress_callback, status_callback):
+    """Create LocationAnalyzer from processing_config and config. Used on each rerun."""
+    cfg = st.session_state.processing_config
+    return LocationAnalyzer(
+        kmz_file=cfg["kmz_file"],
+        verbose=config.VERBOSE,
+        openai_api_key=cfg["openai_api_key"],
+        gemini_api_key=cfg["gemini_api_key"],
+        ai_provider="both",
+        use_gpt=config.USE_GPT,
+        chunk_size=config.DEFAULT_CHUNK_SIZE,
+        max_locations=config.DEFAULT_MAX_LOCATIONS,
+        pause_before_gpt=False,
+        enable_web_browsing=config.DEFAULT_ENABLE_WEB_BROWSING,
+        primary_place_types=config.PRIMARY_PLACE_TYPES,
+        additional_place_types=config.ADDITIONAL_PLACE_TYPES,
+        special_place_types=config.SPECIAL_PLACE_TYPES,
+        progress_callback=progress_callback,
+        status_callback=status_callback,
+    )
 
 # Process button
 if uploaded_file is not None:
@@ -198,52 +220,36 @@ if uploaded_file is not None:
                             os.unlink(tmp_kmz_path)
                         api_keys_valid = False
                     
-                    # If we have valid keys, proceed
+                    # If we have valid keys, run initial KMZ+OSM (chunked state machine starts after this)
                     if api_keys_valid and (openai_api_key or gemini_api_key):
-                        # Create progress containers
                         progress_container = st.container()
-                        status_container = st.container()
-                        
                         with progress_container:
-                            # Enhanced progress display
                             stage_text = st.empty()
                             main_progress = st.progress(0)
                             progress_metrics = st.empty()
                             status_text = st.empty()
-                        
-                        # Progress tracking using new ProgressTracker
-                        progress_messages = []
-                        status_messages = []
-                        
-                        # Initialize progress tracker and UI
+                        progress_messages = list(st.session_state.progress_messages or [])
+                        status_messages = list(st.session_state.status_messages or [])
                         progress_tracker = ProgressTracker()
                         progress_ui = ProgressUI(
                             stage_text_container=stage_text,
                             progress_bar=main_progress,
                             metrics_container=progress_metrics,
-                            status_text_container=status_text
+                            status_text_container=status_text,
                         )
-                        
-                        # Create callbacks that save to session state in real-time
-                        # This ensures logs survive even if script times out
+
                         def progress_callback_with_save(msg: str) -> None:
                             progress_messages.append(msg)
-                            # Immediately save to session state to survive timeouts
                             st.session_state.progress_messages = progress_messages.copy()
-                            # Also update UI
                             progress_tracker.update_from_message(msg)
                             progress_ui.update(progress_tracker, msg)
-                        
-                        progress_callback = progress_callback_with_save
-                        
+
                         def status_callback(msg: str) -> None:
                             status_messages.append(msg)
-                            progress_messages.append(msg)  # Also add to progress messages for log
-                            # Immediately save to session state to survive timeouts
+                            progress_messages.append(msg)
                             st.session_state.status_messages = status_messages.copy()
                             st.session_state.progress_messages = progress_messages.copy()
-                        
-                        # Initialize analyzer
+
                         try:
                             analyzer = LocationAnalyzer(
                                 kmz_file=tmp_kmz_path,
@@ -254,94 +260,154 @@ if uploaded_file is not None:
                                 use_gpt=config.USE_GPT,
                                 chunk_size=config.DEFAULT_CHUNK_SIZE,
                                 max_locations=config.DEFAULT_MAX_LOCATIONS,
-                                pause_before_gpt=False,  # Not used in Streamlit
+                                pause_before_gpt=False,
                                 enable_web_browsing=config.DEFAULT_ENABLE_WEB_BROWSING,
                                 primary_place_types=config.PRIMARY_PLACE_TYPES,
                                 additional_place_types=config.ADDITIONAL_PLACE_TYPES,
                                 special_place_types=config.SPECIAL_PLACE_TYPES,
-                                progress_callback=progress_callback,
-                                status_callback=status_callback
+                                progress_callback=progress_callback_with_save,
+                                status_callback=status_callback,
                             )
-                            
-                            # Run analysis with progress saving
-                            # Save progress messages periodically to survive timeouts
-                            st.session_state.progress_messages = progress_messages
-                            st.session_state.status_messages = status_messages
-                            
-                            # Run analysis (this may take a long time for large datasets)
-                            # Streamlit may timeout, but we've saved progress messages above
-                            results = analyzer.run()
-                            
-                            # Immediately save progress after run completes
-                            st.session_state.progress_messages = progress_messages
-                            st.session_state.status_messages = status_messages
-                            
-                            if results:
-                                # Update progress to 100%
-                                progress_ui.mark_complete()
-                                
-                                # Save results FIRST, before Excel export (in case Excel fails)
-                                st.session_state.results = results
+                            polygon_points, locations = analyzer.run_kmz_and_osm_only()
+                            if locations is None:
+                                st.error("❌ KMZ parsing or OSM lookup failed. Check the log below.")
                                 st.session_state.progress_messages = progress_messages
                                 st.session_state.status_messages = status_messages
-                                st.session_state.polygon_points = analyzer.polygon_points
-                                
-                                # Then attempt Excel export (non-blocking)
-                                try:
-                                    excel_data = analyzer.save_to_excel(results)
-                                    if excel_data:
-                                        st.session_state.excel_data = excel_data
-                                        st.success(f"✅ Successfully processed {len(results)} locations!")
-                                    else:
-                                        st.warning("⚠️ Excel export failed, but results are available below.")
-                                        st.session_state.excel_data = None
-                                except Exception as excel_error:
-                                    import traceback
-                                    error_traceback = traceback.format_exc()
-                                    st.warning(f"⚠️ Excel export error: {str(excel_error)}. Results are still available below.")
-                                    # Log the error
-                                    status_messages.append(f"Excel export error: {str(excel_error)}")
-                                    status_messages.append(error_traceback)
-                                    st.session_state.excel_data = None
+                                clear_processing_state()
                             else:
-                                st.error("❌ Analysis failed. Check the status messages above.")
+                                estimated_time = analyzer._estimate_processing_time(len(locations), 0, 0)
+                                analyzer._log(f"Estimated remaining time: {estimated_time}")
+                                analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries started")
+                                analyzer._log("\n--- Retrieving Administrative Boundaries ---")
+                                st.session_state.polygon_points = polygon_points
+                                st.session_state.processing_locations = locations
+                                st.session_state.processing_stage = "hierarchy"
+                                st.session_state.hierarchy_batch_index = 0
+                                st.session_state.processing_config = {
+                                    "kmz_file": tmp_kmz_path,
+                                    "openai_api_key": openai_api_key,
+                                    "gemini_api_key": gemini_api_key,
+                                }
                                 st.session_state.progress_messages = progress_messages
                                 st.session_state.status_messages = status_messages
-                                main_progress.progress(0)
-                        
+                                st.rerun()
                         except Exception as e:
+                            import traceback as tb
                             st.error(f"❌ Error during analysis: {str(e)}")
                             st.session_state.progress_messages = progress_messages
                             st.session_state.status_messages = status_messages
-                            import traceback
-                            error_traceback = traceback.format_exc()
                             with st.expander("Error Details"):
-                                st.code(error_traceback)
-                            progress_messages.append(f"ERROR: {str(e)}")
-                            progress_messages.append(error_traceback)
-                            st.session_state.progress_messages = progress_messages
-                            st.session_state.status_messages = status_messages
-                            main_progress.progress(0)
+                                st.code(tb.format_exc())
                             clear_processing_state()
-                        
-                        finally:
-                            # Only clean up temp file if processing is complete (not if we're resuming)
-                            if not st.session_state.processing:
-                                if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
-                                    try:
-                                        os.unlink(st.session_state.tmp_kmz_path)
-                                    except:
-                                        pass
-                                    st.session_state.tmp_kmz_path = None
-                
                 except Exception as e:
+                    import traceback as tb
                     st.error(f"❌ Error: {str(e)}")
-                    import traceback
                     with st.expander("Error Details"):
-                        st.code(traceback.format_exc())
+                        st.code(tb.format_exc())
                     st.session_state.processing = False
-                    if 'tmp_kmz_path' in locals() and os.path.exists(tmp_kmz_path):
-                        os.unlink(tmp_kmz_path)
+                    if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
+                        try:
+                            os.unlink(st.session_state.tmp_kmz_path)
+                        except Exception:
+                            pass
+                    st.session_state.tmp_kmz_path = None
+
+            # State machine: run one chunk per rerun when processing is active
+            if st.session_state.processing and st.session_state.processing_stage is not None:
+                progress_container = st.container()
+                with progress_container:
+                    stage_text = st.empty()
+                    main_progress = st.progress(0)
+                    progress_metrics = st.empty()
+                    status_text = st.empty()
+                progress_messages = list(st.session_state.progress_messages or [])
+                status_messages = list(st.session_state.status_messages or [])
+                progress_tracker = ProgressTracker()
+                progress_ui = ProgressUI(
+                    stage_text_container=stage_text,
+                    progress_bar=main_progress,
+                    metrics_container=progress_metrics,
+                    status_text_container=status_text,
+                )
+
+                def progress_cb(msg: str) -> None:
+                    progress_messages.append(msg)
+                    st.session_state.progress_messages = progress_messages.copy()
+                    progress_tracker.update_from_message(msg)
+                    progress_ui.update(progress_tracker, msg)
+
+                def status_cb(msg: str) -> None:
+                    status_messages.append(msg)
+                    progress_messages.append(msg)
+                    st.session_state.status_messages = status_messages.copy()
+                    st.session_state.progress_messages = progress_messages.copy()
+
+                if st.button("Cancel", key="cancel_processing"):
+                    clear_processing_state()
+                    st.rerun()
+
+                analyzer = create_analyzer_from_state(progress_cb, status_cb)
+                locations = st.session_state.processing_locations
+                batch_size = config.DEFAULT_BATCH_SIZE
+                chunk_size = config.DEFAULT_CHUNK_SIZE
+
+                if st.session_state.processing_stage == "hierarchy":
+                    idx = st.session_state.hierarchy_batch_index
+                    total_batches = (len(locations) + batch_size - 1) // batch_size
+                    batch = locations[idx * batch_size : (idx + 1) * batch_size]
+                    if batch:
+                        analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
+                        analyzer.fetch_admin_hierarchy_batch(batch)
+                        estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
+                        analyzer._log(f"Estimated remaining time: {estimated_time}")
+                        time.sleep(config.HIERARCHY_BATCH_DELAY)
+                    st.session_state.hierarchy_batch_index = idx + 1
+                    if (idx + 1) * batch_size >= len(locations):
+                        analyzer._log("Finished retrieving administrative boundaries.")
+                        analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
+                        # Apply max_locations limit if set
+                        max_loc = config.DEFAULT_MAX_LOCATIONS
+                        if max_loc > 0 and len(locations) > max_loc:
+                            analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
+                            st.session_state.processing_locations = locations[:max_loc]
+                            locations = st.session_state.processing_locations
+                        analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
+                        analyzer._log("\n--- Starting Population Estimation (GPT) ---")
+                        st.session_state.processing_stage = "population"
+                        st.session_state.population_batch_index = 0
+                    st.session_state.progress_messages = progress_messages
+                    st.session_state.status_messages = status_messages
+                    st.rerun()
+
+                elif st.session_state.processing_stage == "population":
+                    idx = st.session_state.population_batch_index
+                    num_batches = (len(locations) + chunk_size - 1) // chunk_size
+                    analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
+                    analyzer.estimate_populations_single_batch(locations, idx)
+                    if idx < num_batches - 1:
+                        time.sleep(config.GPT_BATCH_DELAY)
+                    st.session_state.population_batch_index = idx + 1
+                    if (idx + 1) * chunk_size >= len(locations):
+                        analyzer._log("CHECKPOINT: Stage 4 - Population estimation completed")
+                        analyzer.calculate_combined_populations(locations)
+                        st.session_state.processing_stage = "excel"
+                    st.session_state.progress_messages = progress_messages
+                    st.session_state.status_messages = status_messages
+                    st.rerun()
+
+                elif st.session_state.processing_stage == "excel":
+                    excel_data = analyzer.save_to_excel(locations)
+                    st.session_state.results = locations
+                    st.session_state.excel_data = excel_data
+                    st.session_state.progress_messages = progress_messages
+                    st.session_state.status_messages = status_messages
+                    progress_ui.mark_complete()
+                    clear_processing_state()
+                    if excel_data:
+                        st.success(f"✅ Successfully processed {len(locations)} locations!")
+                    else:
+                        st.warning("⚠️ Excel export failed, but results are available below.")
+                    st.rerun()
 
 # Display results
 if st.session_state.results is not None:

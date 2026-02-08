@@ -619,7 +619,11 @@ class LocationAnalyzer:
                 # Cache the hierarchy
                 set_hierarchy_cache(lat, lon, hierarchy)
         
-        buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
+        # Use smaller buffer in chunked mode so run finishes before gateway timeout
+        if timeout_sec is not None:
+            buffer = getattr(config, 'HIERARCHY_TIMEOUT_BUFFER', 2)
+        else:
+            buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
 
         def _execute_hierarchy_query() -> Dict[str, Any]:
             """Execute the hierarchy query."""

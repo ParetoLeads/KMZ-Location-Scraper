@@ -542,8 +542,8 @@ class LocationAnalyzer:
                 
         return unique_locations
     
-    def _fetch_admin_hierarchy_batch(self, locations: List[Dict]) -> List[Dict]:
-        """Get administrative hierarchy for multiple locations in a single batch request with unlimited retry."""
+    def fetch_admin_hierarchy_batch(self, locations: List[Dict]) -> List[Dict]:
+        """Get administrative hierarchy for multiple locations in a single batch request with unlimited retry. Public for chunked/rerun processing."""
         if not locations:
             return locations
 
@@ -1180,7 +1180,97 @@ class LocationAnalyzer:
         self._log("--- Population Estimation Phase Complete ---")
 
         return locations
-    
+
+    def estimate_populations_single_batch(
+        self, locations: List[Dict], batch_index: int, chunk_size: Optional[int] = None
+    ) -> None:
+        """Process one batch of population estimation (GPT/Gemini). Updates locations in place.
+        Used by chunked/rerun processing. Does not compute combined population; call calculate_combined_populations after all batches."""
+        chunk = chunk_size if chunk_size is not None else self.chunk_size
+        start_index = batch_index * chunk
+        end_index = min(start_index + chunk, len(locations))
+        batch_locations = locations[start_index:end_index]
+        if not batch_locations:
+            return
+
+        use_openai = self.use_gpt and self.use_openai
+        use_gemini = self.use_gpt and self.use_gemini_flag
+        if not use_openai and not use_gemini:
+            return
+
+        # Initialize AI fields for this batch only
+        for loc in batch_locations:
+            loc["gpt_population"] = None
+            loc["gpt_confidence"] = None
+            loc["gemini_population"] = None
+            loc["gemini_confidence"] = None
+            loc["combined_population"] = None
+            loc["combined_confidence"] = None
+            loc["final_population"] = 0
+            loc["population_source"] = "None"
+
+        gpt_results_map = {}
+        gemini_results_map = {}
+        if use_openai and use_gemini:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_to_provider = {}
+                future_to_provider[executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)] = "gpt"
+                future_to_provider[executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)] = "gemini"
+                for future in as_completed(future_to_provider.keys()):
+                    provider = future_to_provider[future]
+                    try:
+                        result = future.result()
+                        if provider == "gpt":
+                            gpt_results_map = result
+                        else:
+                            gemini_results_map = result
+                    except Exception as e:
+                        if provider == "gpt":
+                            gpt_results_map = {}
+                        else:
+                            gemini_results_map = {}
+        else:
+            if use_openai:
+                gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
+            if use_gemini:
+                gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
+
+        for original_idx, result_data in gpt_results_map.items():
+            if 0 <= original_idx < len(locations):
+                locations[original_idx]["gpt_population"] = result_data.get("population")
+                locations[original_idx]["gpt_confidence"] = result_data.get("confidence")
+        for original_idx, result_data in gemini_results_map.items():
+            if 0 <= original_idx < len(locations):
+                locations[original_idx]["gemini_population"] = result_data.get("population")
+                locations[original_idx]["gemini_confidence"] = result_data.get("confidence")
+
+    def calculate_combined_populations(self, locations: List[Dict]) -> List[Dict]:
+        """Compute combined_population, combined_confidence, final_population, and population_source for all locations. Call after all population batches are done."""
+        for loc in locations:
+            gpt_pop = loc.get("gpt_population")
+            gpt_conf = loc.get("gpt_confidence")
+            gemini_pop = loc.get("gemini_population")
+            gemini_conf = loc.get("gemini_confidence")
+            combined_pop, combined_conf = self._calculate_combined_population(
+                gpt_pop, gpt_conf, gemini_pop, gemini_conf
+            )
+            loc["combined_population"] = combined_pop
+            loc["combined_confidence"] = combined_conf
+            final_pop = None
+            final_source = "None"
+            if combined_pop is not None and combined_pop > 0 and combined_conf in ["High", "Medium"]:
+                final_pop = combined_pop
+                final_source = "Combined (GPT + Gemini)" if (self.use_openai and self.use_gemini_flag) else ("OpenAI GPT" if self.use_openai else "Google Gemini")
+            elif gpt_pop is not None and gpt_pop > 0 and gpt_conf in ["High", "Medium"]:
+                final_pop = gpt_pop
+                final_source = "OpenAI GPT"
+            elif gemini_pop is not None and gemini_pop > 0 and gemini_conf in ["High", "Medium"]:
+                final_pop = gemini_pop
+                final_source = "Google Gemini"
+            loc["final_population"] = final_pop if final_pop is not None else 0
+            loc["population_source"] = final_source
+        return locations
+
     def _calculate_combined_population(self, gpt_pop: Optional[int], gpt_conf: Optional[str], 
                                        gemini_pop: Optional[int], gemini_conf: Optional[str]) -> Tuple[Optional[int], Optional[str]]:
         """Calculate weighted combined population based on confidence levels.
@@ -1333,6 +1423,36 @@ class LocationAnalyzer:
             traceback.print_exc()
             return None
     
+    def run_kmz_and_osm_only(self) -> Tuple[Optional[List[Tuple[float, float]]], Optional[List[Dict]]]:
+        """Run only KMZ parsing and OSM location discovery. Returns (polygon_points, locations) for chunked/rerun processing."""
+        try:
+            self._log("CHECKPOINT: Stage 1 - Parsing KMZ boundary file started")
+            self.polygon_points = self.extract_boundary_from_kmz()
+            self._log("CHECKPOINT: Stage 1 - Parsing KMZ boundary file completed")
+            self._log("CHECKPOINT: Stage 2 - Finding OSM locations started")
+            self._log("\n--- Finding OSM Locations ---")
+            primary_locations = self._find_osm_locations(self.polygon_points, "primary", self.primary_place_types)
+            time.sleep(config.OSM_QUERY_DELAY)
+            additional_places = []
+            if self.additional_place_types:
+                additional_places = self._find_osm_locations(self.polygon_points, "additional", self.additional_place_types)
+                time.sleep(config.OSM_QUERY_DELAY)
+            special_locations = []
+            if self.special_place_types:
+                special_locations = self._find_osm_locations(self.polygon_points, "special", self.special_place_types)
+            administrative_areas = []
+            all_locations = primary_locations + additional_places + special_locations + administrative_areas
+            all_locations = self.clean_and_deduplicate_locations(all_locations)
+            self._log("CHECKPOINT: Stage 2 - Finding OSM locations completed")
+            self._log(f"\n--- OSM Location Summary ---")
+            self._log(f"Total unique OSM locations found: {len(all_locations)}")
+            return self.polygon_points, all_locations
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            self._log(f"ERROR: KMZ/OSM failed: {str(e)}")
+            self._log(f"ERROR: Full traceback:\n{error_traceback}")
+            return None, None
+
     def run(self):
         """Run the full analysis process."""
         start_time = time.time()
@@ -1381,7 +1501,7 @@ class LocationAnalyzer:
                 batch = all_locations[i:i + batch_size]
                 batch_num = (i // batch_size) + 1
                 self._log(f"  Retrieving hierarchy batch {batch_num}/{total_batches} ({len(batch)} locations)...")
-                self._fetch_admin_hierarchy_batch(batch)
+                self.fetch_admin_hierarchy_batch(batch)
                 hierarchy_completed = batch_num
                 # Update estimate after each batch
                 estimated_time = self._estimate_processing_time(len(all_locations), hierarchy_completed, 0)

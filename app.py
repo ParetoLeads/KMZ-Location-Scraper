@@ -213,21 +213,29 @@ if uploaded_file is not None:
                                 # Update progress to 100%
                                 progress_ui.mark_complete()
                                 
-                                # Save to Excel
-                                excel_data = analyzer.save_to_excel(results)
+                                # Save results FIRST, before Excel export (in case Excel fails)
+                                st.session_state.results = results
+                                st.session_state.progress_messages = progress_messages
+                                st.session_state.status_messages = status_messages
+                                st.session_state.polygon_points = analyzer.polygon_points
                                 
-                                if excel_data:
-                                    st.session_state.results = results
-                                    st.session_state.excel_data = excel_data
-                                    st.session_state.progress_messages = progress_messages
-                                    st.session_state.status_messages = status_messages
-                                    st.session_state.polygon_points = analyzer.polygon_points
-                                    st.success(f"✅ Successfully processed {len(results)} locations!")
-                                else:
-                                    st.warning("⚠️ Analysis completed but Excel export failed. Results are still available below.")
-                                    st.session_state.results = results
-                                    st.session_state.progress_messages = progress_messages
-                                    st.session_state.status_messages = status_messages
+                                # Then attempt Excel export (non-blocking)
+                                try:
+                                    excel_data = analyzer.save_to_excel(results)
+                                    if excel_data:
+                                        st.session_state.excel_data = excel_data
+                                        st.success(f"✅ Successfully processed {len(results)} locations!")
+                                    else:
+                                        st.warning("⚠️ Excel export failed, but results are available below.")
+                                        st.session_state.excel_data = None
+                                except Exception as excel_error:
+                                    import traceback
+                                    error_traceback = traceback.format_exc()
+                                    st.warning(f"⚠️ Excel export error: {str(excel_error)}. Results are still available below.")
+                                    # Log the error
+                                    status_messages.append(f"Excel export error: {str(excel_error)}")
+                                    status_messages.append(error_traceback)
+                                    st.session_state.excel_data = None
                             else:
                                 st.error("❌ Analysis failed. Check the status messages above.")
                                 st.session_state.progress_messages = progress_messages
@@ -520,9 +528,147 @@ st.divider()
 with st.expander("📋 Processing Log (click to expand)", expanded=False):
     all_messages = st.session_state.progress_messages + st.session_state.status_messages
     if all_messages:
+        # Parse log messages to extract errors, checkpoints, and stages
+        errors = []
+        warnings = []
+        checkpoints = []
+        stages_completed = []
+        stages_started = []
+        last_checkpoint = None
+        start_time = None
+        end_time = None
+        
+        for msg in all_messages:
+            # Extract timestamps
+            if msg.startswith('[') and ']' in msg:
+                timestamp = msg[1:msg.index(']')]
+                if start_time is None:
+                    start_time = timestamp
+                end_time = timestamp
+            
+            # Identify errors
+            if 'ERROR:' in msg.upper() or 'ERROR' in msg.upper():
+                errors.append(msg)
+            
+            # Identify warnings
+            if 'WARNING' in msg.upper() or '⚠️' in msg:
+                warnings.append(msg)
+            
+            # Identify checkpoints
+            if 'CHECKPOINT:' in msg.upper():
+                checkpoints.append(msg)
+                last_checkpoint = msg
+                # Extract stage completion
+                if 'completed' in msg.lower():
+                    if 'Stage 1' in msg:
+                        stages_completed.append('Stage 1: KMZ Parsing')
+                    elif 'Stage 2' in msg:
+                        stages_completed.append('Stage 2: Finding OSM Locations')
+                    elif 'Stage 3' in msg:
+                        stages_completed.append('Stage 3: Administrative Boundaries')
+                    elif 'Stage 4' in msg:
+                        stages_completed.append('Stage 4: Population Estimation')
+                    elif 'All processing stages completed' in msg:
+                        stages_completed.append('All Stages')
+                    elif 'Excel export completed' in msg:
+                        stages_completed.append('Excel Export')
+                elif 'started' in msg.lower():
+                    if 'Stage 1' in msg:
+                        stages_started.append('Stage 1: KMZ Parsing')
+                    elif 'Stage 2' in msg:
+                        stages_started.append('Stage 2: Finding OSM Locations')
+                    elif 'Stage 3' in msg:
+                        stages_started.append('Stage 3: Administrative Boundaries')
+                    elif 'Stage 4' in msg:
+                        stages_started.append('Stage 4: Population Estimation')
+        
+        # Calculate execution time if we have timestamps
+        execution_time = None
+        if start_time and end_time:
+            try:
+                from datetime import datetime, timedelta
+                start_dt = datetime.strptime(start_time, "%H:%M:%S")
+                end_dt = datetime.strptime(end_time, "%H:%M:%S")
+                # Handle day rollover
+                if end_dt < start_dt:
+                    end_dt = end_dt + timedelta(days=1)
+                delta = end_dt - start_dt
+                execution_time = f"{delta.total_seconds():.1f} seconds"
+            except Exception as e:
+                # If time calculation fails, just show the start and end times
+                execution_time = f"{start_time} - {end_time}"
+        
+        # Display Summary Section
+        st.markdown("### 📊 Log Summary")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if errors:
+                st.error(f"❌ **Errors:** {len(errors)}")
+            else:
+                st.success("✅ **Errors:** 0")
+        
+        with col2:
+            if warnings:
+                st.warning(f"⚠️ **Warnings:** {len(warnings)}")
+            else:
+                st.info("ℹ️ **Warnings:** 0")
+        
+        with col3:
+            if execution_time:
+                st.info(f"⏱️ **Execution Time:** {execution_time}")
+            else:
+                st.info("⏱️ **Execution Time:** N/A")
+        
+        # Show last checkpoint
+        if last_checkpoint:
+            st.info(f"📍 **Last Checkpoint:** {last_checkpoint}")
+        
+        # Show stage completion status
+        if stages_completed or stages_started:
+            st.markdown("#### Stage Status")
+            all_stages = ['Stage 1: KMZ Parsing', 'Stage 2: Finding OSM Locations', 
+                         'Stage 3: Administrative Boundaries', 'Stage 4: Population Estimation', 
+                         'Excel Export']
+            for stage in all_stages:
+                if stage in stages_completed:
+                    st.success(f"✅ {stage}")
+                elif stage in stages_started:
+                    st.warning(f"⏳ {stage} (started but not completed)")
+                else:
+                    st.text(f"⚪ {stage} (not started)")
+        
+        # Show error summary if there are errors
+        if errors:
+            st.markdown("#### ❌ Error Summary")
+            with st.expander("View Errors", expanded=True):
+                for i, error in enumerate(errors[:10], 1):  # Show first 10 errors
+                    st.error(f"**Error {i}:**\n```\n{error}\n```")
+                if len(errors) > 10:
+                    st.caption(f"... and {len(errors) - 10} more errors")
+        
+        st.divider()
+        st.markdown("### 📝 Full Log")
+        
+        # Display log with syntax highlighting for errors
         log_text = "\n".join(all_messages)
-        st.code(log_text, language=None)
-        st.caption("Copy this log if you need to report any issues")
+        
+        # Create HTML with error highlighting
+        log_lines = log_text.split('\n')
+        highlighted_log = []
+        for line in log_lines:
+            if 'ERROR:' in line.upper() or 'ERROR' in line.upper():
+                highlighted_log.append(f'<span style="color: red; font-weight: bold;">{line}</span>')
+            elif 'WARNING' in line.upper() or '⚠️' in line:
+                highlighted_log.append(f'<span style="color: orange; font-weight: bold;">{line}</span>')
+            elif 'CHECKPOINT:' in line.upper():
+                highlighted_log.append(f'<span style="color: blue; font-weight: bold;">{line}</span>')
+            else:
+                highlighted_log.append(line)
+        
+        st.markdown(f'<pre style="background-color: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; font-size: 0.85em;">{"<br>".join(highlighted_log)}</pre>', unsafe_allow_html=True)
+        
+        st.caption("💡 Tip: Copy this log if you need to report any issues. Errors are highlighted in red, warnings in orange, and checkpoints in blue.")
     else:
         st.info("Log will appear here once processing starts.")
 

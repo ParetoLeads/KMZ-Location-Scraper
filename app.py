@@ -493,6 +493,8 @@ if uploaded_file is not None:
                     st.session_state.progress_messages = progress_messages.copy()
                     st.session_state.status_messages = status_messages.copy()
                     st.error(f"Error during processing: {err_msg}")
+                    if "504" in err_msg or "Gateway Timeout" in err_msg or "overpass" in err_msg.lower():
+                        st.info("Overpass often returns 504 when busy. Set env `OVERPASS_URL` or `OSM_OVERPASS_URL` to another public Overpass instance and restart the app.")
                     with st.expander("Error details"):
                         st.code(tb.format_exc())
                     st.rerun()

@@ -6,6 +6,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional, Callable, Any
 import time
+from datetime import datetime
 from openai import OpenAI
 from math import ceil
 from bs4 import BeautifulSoup
@@ -131,10 +132,12 @@ class LocationAnalyzer:
             raise FileNotFoundError(f"KMZ file not found: {kmz_file}")
     
     def _log(self, message: str):
-        """Log a message using callbacks."""
-        self.progress_callback(message)
+        """Log a message using callbacks with timestamp."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamped_message = f"[{timestamp}] {message}"
+        self.progress_callback(timestamped_message)
         if self.verbose:
-            self.status_callback(message)
+            self.status_callback(timestamped_message)
     
     def _estimate_processing_time(self, num_locations: int, hierarchy_completed: int = 0, gpt_completed: int = 0) -> str:
         """Estimate remaining processing time based on number of locations and completed batches.
@@ -708,7 +711,9 @@ class LocationAnalyzer:
             raw_response_content = response.choices[0].message.content
                 
         except Exception as e:
-            self._log(f"Error calling OpenAI API: {str(e)}")
+            error_traceback = traceback.format_exc()
+            self._log(f"ERROR: Error calling OpenAI API: {str(e)}")
+            self._log(f"ERROR: Full traceback:\n{error_traceback}")
             # Return error results for all locations in batch
             results_map = {}
             for i in range(len(locations_chunk)):
@@ -780,7 +785,9 @@ class LocationAnalyzer:
                  original_idx = start_index + i
                  parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
         except ValueError as e:
-             self._log(f"Error processing GPT response structure: {e}")
+             error_traceback = traceback.format_exc()
+             self._log(f"ERROR: Error processing GPT response structure: {e}")
+             self._log(f"ERROR: Full traceback:\n{error_traceback}")
              for i in range(len(locations_chunk)):
                  original_idx = start_index + i
                  parsed_results_map[original_idx] = {"population": None, "confidence": "Format Error"}
@@ -870,11 +877,11 @@ class LocationAnalyzer:
                 
         except Exception as e:
             error_traceback = traceback.format_exc()
-            error_msg = f"Error calling Gemini API: {str(e)}"
+            error_msg = f"ERROR: Error calling Gemini API: {str(e)}"
             # Use status_callback instead of _log to avoid Streamlit context issues in threads
             try:
                 self.status_callback(error_msg)
-                self.status_callback(f"Full traceback:\n{error_traceback}")
+                self.status_callback(f"ERROR: Full traceback:\n{error_traceback}")
             except:
                 print(error_msg)  # Fallback to print if Streamlit context unavailable
                 print(error_traceback)
@@ -953,7 +960,8 @@ class LocationAnalyzer:
 
         except json.JSONDecodeError as e:
             # Log error without Streamlit UI updates (thread-safe)
-            error_msg = f"Error: Failed to decode Gemini JSON response: {str(e)}"
+            error_traceback = traceback.format_exc()
+            error_msg = f"ERROR: Failed to decode Gemini JSON response: {str(e)}"
             error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
             # Use status_callback which is safer in threads, or just print
             try:
@@ -964,7 +972,8 @@ class LocationAnalyzer:
                  original_idx = start_index + i
                  parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
         except ValueError as e:
-             error_msg = f"Error processing Gemini response structure: {e}"
+             error_traceback = traceback.format_exc()
+             error_msg = f"ERROR: Error processing Gemini response structure: {e}"
              error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
              try:
                  self.status_callback(error_msg)
@@ -1107,7 +1116,9 @@ class LocationAnalyzer:
                     estimated_time = self._estimate_processing_time(len(locations), hierarchy_completed, gpt_completed_estimate_batches)
                     self._log(f"Estimated remaining time: {estimated_time}")
                 except Exception as e:
-                    self._log(f"  Error processing AI batch {i+1}: {str(e)}")
+                    error_traceback = traceback.format_exc()
+                    self._log(f"ERROR: Error processing AI batch {i+1}: {str(e)}")
+                    self._log(f"ERROR: Full traceback:\n{error_traceback}")
                     for idx in range(start_index, min(end_index, len(locations))):
                          if 0 <= idx < len(locations):
                             locations[idx]["gpt_confidence"] = "Error"
@@ -1239,6 +1250,9 @@ class LocationAnalyzer:
             filename = self.output_excel
         
         try:
+            # CHECKPOINT: Excel export started
+            self._log(f"CHECKPOINT: Excel export started for {len(all_locations)} locations")
+            excel_start_time = time.time()
             for loc in all_locations:
                  if 'admin_hierarchy' not in loc: loc['admin_hierarchy'] = {}
                  
@@ -1302,23 +1316,34 @@ class LocationAnalyzer:
             
             output.seek(0)
             
+            excel_elapsed = time.time() - excel_start_time
             self._log(f"\nSaved {len(all_locations)} locations to Excel file.")
             self._log(
                 f"Clean Data sheet contains {len(df_clean)} locations with population > "
                 f"{config.MIN_POPULATION_FOR_CLEAN_DATA:,}."
             )
+            self._log(f"CHECKPOINT: Excel export completed successfully in {excel_elapsed:.1f} seconds")
             return output
             
         except Exception as e:
-            self._log(f"Error saving to Excel: {str(e)}")
+            error_traceback = traceback.format_exc()
+            self._log(f"ERROR: Error saving to Excel: {str(e)}")
+            self._log(f"ERROR: Full traceback:\n{error_traceback}")
+            self._log("CHECKPOINT: Excel export failed")
             traceback.print_exc()
             return None
     
     def run(self):
         """Run the full analysis process."""
+        start_time = time.time()
         try:
+            # CHECKPOINT: Stage 1 - KMZ Parsing
+            self._log("CHECKPOINT: Stage 1 - Parsing KMZ boundary file started")
             self.polygon_points = self.extract_boundary_from_kmz()
+            self._log("CHECKPOINT: Stage 1 - Parsing KMZ boundary file completed")
             
+            # CHECKPOINT: Stage 2 - Finding OSM Locations
+            self._log("CHECKPOINT: Stage 2 - Finding OSM locations started")
             self._log("\n--- Finding OSM Locations ---")
             primary_locations = self._find_osm_locations(self.polygon_points, "primary", self.primary_place_types)
             time.sleep(config.OSM_QUERY_DELAY)  # Delay between query types to avoid rate limiting
@@ -1336,6 +1361,7 @@ class LocationAnalyzer:
             
             all_locations = primary_locations + additional_places + special_locations + administrative_areas
             all_locations = self.clean_and_deduplicate_locations(all_locations)
+            self._log("CHECKPOINT: Stage 2 - Finding OSM locations completed")
             
             self._log(f"\n--- OSM Location Summary ---")
             self._log(f"Total unique OSM locations found: {len(all_locations)}")
@@ -1344,6 +1370,8 @@ class LocationAnalyzer:
             estimated_time = self._estimate_processing_time(len(all_locations), 0, 0)
             self._log(f"Estimated remaining time: {estimated_time}")
             
+            # CHECKPOINT: Stage 3 - Administrative Boundaries
+            self._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries started")
             self._log("\n--- Retrieving Administrative Boundaries ---")
             # Batch size for hierarchy queries
             batch_size = config.DEFAULT_BATCH_SIZE
@@ -1363,6 +1391,7 @@ class LocationAnalyzer:
                     time.sleep(config.HIERARCHY_BATCH_DELAY)  # Delay between batches for rate limit safety
             
             self._log("Finished retrieving administrative boundaries.")
+            self._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
 
             if self.max_locations > 0 and len(all_locations) > self.max_locations:
                 self._log(f"\nLimiting results to {self.max_locations} locations (out of {len(all_locations)} found)")
@@ -1377,12 +1406,22 @@ class LocationAnalyzer:
                 all_locations = prioritized[:self.max_locations]
                 self._log(f"Processing {len(all_locations)} locations after limiting.")
 
+            # CHECKPOINT: Stage 4 - Population Estimation
+            self._log("CHECKPOINT: Stage 4 - Population estimation started")
             self._log("\n--- Starting Population Estimation (GPT) ---")
             all_locations = self.estimate_populations(all_locations)
+            self._log("CHECKPOINT: Stage 4 - Population estimation completed")
             
+            # CHECKPOINT: All stages completed
+            elapsed_time = time.time() - start_time
+            self._log(f"CHECKPOINT: All processing stages completed successfully in {elapsed_time:.1f} seconds")
             return all_locations
             
         except Exception as e:
-            self._log(f"An error occurred during analysis: {str(e)}")
+            error_traceback = traceback.format_exc()
+            self._log(f"ERROR: Analysis failed: {str(e)}")
+            self._log(f"ERROR: Full traceback:\n{error_traceback}")
+            elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
+            self._log(f"CHECKPOINT: Processing failed after {elapsed_time:.1f} seconds")
             traceback.print_exc()
             return None

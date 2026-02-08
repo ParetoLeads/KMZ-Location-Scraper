@@ -42,7 +42,8 @@ class LocationAnalyzer:
                  additional_place_types: List[str] = None,
                  special_place_types: List[str] = None,
                  progress_callback: Optional[Callable[[str], None]] = None,
-                 status_callback: Optional[Callable[[str], None]] = None):
+                 status_callback: Optional[Callable[[str], None]] = None,
+                 skip_ai_status_log: bool = False):
         """Initialize the location analyzer with the KMZ file path.
         
         Args:
@@ -102,7 +103,8 @@ class LocationAnalyzer:
                 self.gpt_client = OpenAI(api_key=self.openai_api_key)
                 self.gpt_model: str = config.GPT_MODEL
                 self.use_openai = True
-                self.status_callback(f"OpenAI GPT enabled using model: {self.gpt_model}")
+                if not skip_ai_status_log:
+                    self.status_callback(f"OpenAI GPT enabled using model: {self.gpt_model}")
             except Exception as e:
                 self.status_callback(f"Warning: Failed to initialize OpenAI client: {str(e)}")
         
@@ -115,7 +117,8 @@ class LocationAnalyzer:
                     genai.configure(api_key=self.gemini_api_key)
                     self.gemini_model = genai.GenerativeModel(config.GEMINI_MODEL)
                     self.use_gemini_flag = True
-                    self.status_callback(f"Google Gemini enabled using model: {config.GEMINI_MODEL}")
+                    if not skip_ai_status_log:
+                        self.status_callback(f"Google Gemini enabled using model: {config.GEMINI_MODEL}")
                 except Exception as e:
                     error_traceback = traceback.format_exc()
                     error_msg = f"Warning: Failed to initialize Gemini client: {str(e)}\n{error_traceback}"
@@ -1557,4 +1560,3 @@ class LocationAnalyzer:
             self._log(f"CHECKPOINT: Processing failed after {elapsed_time:.1f} seconds")
             traceback.print_exc()
             return None
- 

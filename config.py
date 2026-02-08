@@ -31,7 +31,7 @@ class Config:
         'OSM_OVERPASS_URL',
         'http://overpass-api.de/api/interpreter'
     )
-    OSM_API_TIMEOUT: int = int(os.getenv('OSM_API_TIMEOUT', '30'))
+    OSM_API_TIMEOUT: int = int(os.getenv('OSM_API_TIMEOUT', '60'))
     OSM_API_TIMEOUT_BUFFER: int = 10  # Additional seconds for timeout buffer
     
     # Retry Settings
@@ -40,8 +40,8 @@ class Config:
     DEFAULT_MAX_RETRIES: int = 3  # Legacy default (kept for compatibility)
     
     # Processing Settings
-    DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '10'))
-    DEFAULT_BATCH_SIZE: int = 10  # For hierarchy and GPT batches
+    DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '25'))
+    DEFAULT_BATCH_SIZE: int = 20  # For hierarchy (Overpass); population uses DEFAULT_CHUNK_SIZE
     DEFAULT_MAX_LOCATIONS: int = int(os.getenv('DEFAULT_MAX_LOCATIONS', '0'))  # 0 = no limit
     DEFAULT_PAUSE_BEFORE_GPT: bool = False
     DEFAULT_ENABLE_WEB_BROWSING: bool = os.getenv('ENABLE_WEB_BROWSING', 'True').lower() == 'true'
@@ -52,7 +52,7 @@ class Config:
     
     # Delay Settings (in seconds)
     OSM_QUERY_DELAY: int = int(os.getenv('OSM_QUERY_DELAY', '3'))  # Between different query types
-    HIERARCHY_BATCH_DELAY: int = int(os.getenv('HIERARCHY_BATCH_DELAY', '4'))  # Between hierarchy batches
+    HIERARCHY_BATCH_DELAY: int = int(os.getenv('HIERARCHY_BATCH_DELAY', '3'))  # Between hierarchy batches
     GPT_BATCH_DELAY: int = int(os.getenv('GPT_BATCH_DELAY', '2'))  # Between GPT batches
     
     # GPT Settings

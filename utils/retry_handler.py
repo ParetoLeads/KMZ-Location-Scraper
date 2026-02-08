@@ -148,11 +148,42 @@ def _get_http_error_message(
             f"Gateway timeout (504). Waiting {wait_time}s before retry "
             f"(attempt {attempt}/{max_attempts})..."
         )
+    elif status_code is None:
+        return (
+            f"HTTP error (no response). Waiting {wait_time}s before retry "
+            f"(attempt {attempt}/{max_attempts})..."
+        )
     else:
         return (
             f"HTTP error {status_code}. Waiting {wait_time}s before retry "
             f"(attempt {attempt}/{max_attempts})..."
         )
+
+
+def _log_diagnostic(
+    e: Exception,
+    log_callback: Optional[Callable[[str], None]],
+    http_response_text: Optional[str] = None,
+) -> None:
+    """Log one DIAGNOSTIC line with exception type and message. Optionally include response text snippet."""
+    exc_type = type(e).__name__
+    msg = str(e) or "(no message)"
+    if len(msg) > 300:
+        msg = msg[:300] + "..."
+    parts = [f"DIAGNOSTIC: {exc_type} | msg={msg}"]
+    if hasattr(e, "response") and e.response is not None:
+        parts.append(f"response_status={e.response.status_code}")
+    elif hasattr(e, "response"):
+        parts.append("response=None")
+    if http_response_text:
+        snippet = (http_response_text[:200] + "...") if len(http_response_text) > 200 else http_response_text
+        snippet = snippet.replace("\n", " ").strip()
+        parts.append(f"body_preview={snippet}")
+    line = " | ".join(parts)
+    if log_callback:
+        log_callback(line)
+    else:
+        print(line)
 
 
 def execute_with_retry(
@@ -194,7 +225,13 @@ def execute_with_retry(
             last_exception = e
             wait_time = (attempt + 1) * base_delay
             status_code = e.response.status_code if e.response else None
-            
+            response_text = None
+            if e.response is not None and getattr(e.response, "text", None):
+                try:
+                    response_text = e.response.text
+                except Exception:
+                    pass
+            _log_diagnostic(e, log_callback, http_response_text=response_text)
             if attempt < max_attempts - 1:
                 error_msg = _get_http_error_message(status_code, attempt + 1, max_attempts, wait_time)
                 if log_callback:
@@ -202,15 +239,15 @@ def execute_with_retry(
                 time.sleep(wait_time)
                 continue
             else:
-                error_msg = f"Failed after {max_attempts} attempts. HTTP error {status_code}"
+                error_msg = f"Failed after {max_attempts} attempts. HTTP error {status_code if status_code is not None else '(no response)'}"
                 if log_callback:
                     log_callback(error_msg)
                 raise OSMQueryError(error_msg) from e
                 
-        except requests.exceptions.Timeout:
-            last_exception = TimeoutError("Request timeout")
+        except requests.exceptions.Timeout as e:
+            last_exception = e
             wait_time = (attempt + 1) * base_delay
-            
+            _log_diagnostic(e, log_callback)
             if attempt < max_attempts - 1:
                 error_msg = (
                     f"Request timeout. Waiting {wait_time}s before retry "
@@ -229,7 +266,7 @@ def execute_with_retry(
         except requests.exceptions.RequestException as e:
             last_exception = e
             wait_time = (attempt + 1) * base_delay
-            
+            _log_diagnostic(e, log_callback)
             if attempt < max_attempts - 1:
                 error_msg = (
                     f"Request error: {str(e)}. Waiting {wait_time}s before retry "
@@ -248,7 +285,7 @@ def execute_with_retry(
         except Exception as e:
             last_exception = e
             wait_time = (attempt + 1) * base_delay
-            
+            _log_diagnostic(e, log_callback)
             if attempt < max_attempts - 1:
                 error_msg = (
                     f"Unexpected error: {str(e)}. Waiting {wait_time}s before retry "

@@ -41,7 +41,9 @@ class Config:
     
     # Processing Settings
     DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '25'))
-    DEFAULT_BATCH_SIZE: int = 10  # For hierarchy (Overpass); keep small so each rerun finishes within Streamlit timeout
+    DEFAULT_BATCH_SIZE: int = 5   # For hierarchy (Overpass); small so each rerun finishes within Streamlit timeout
+    HIERARCHY_QUERY_TIMEOUT: int = 20   # Shorter timeout for chunked hierarchy queries (seconds)
+    HIERARCHY_MAX_RETRIES_CHUNKED: int = 2   # Max retries per batch in chunked mode to avoid run timeout
     DEFAULT_MAX_LOCATIONS: int = int(os.getenv('DEFAULT_MAX_LOCATIONS', '0'))  # 0 = no limit
     DEFAULT_PAUSE_BEFORE_GPT: bool = False
     DEFAULT_ENABLE_WEB_BROWSING: bool = os.getenv('ENABLE_WEB_BROWSING', 'True').lower() == 'true'

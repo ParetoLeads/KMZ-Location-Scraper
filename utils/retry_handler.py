@@ -224,7 +224,16 @@ def execute_with_retry(
         except requests.exceptions.HTTPError as e:
             last_exception = e
             wait_time = (attempt + 1) * base_delay
-            status_code = e.response.status_code if e.response else None
+            status_code = e.response.status_code if (e.response and hasattr(e.response, 'status_code')) else None
+            if status_code is None and e.response is not None:
+                try:
+                    status_code = getattr(e.response, 'status_code', None)
+                except Exception:
+                    pass
+            if status_code is None and "504" in str(e):
+                status_code = 504
+            if status_code is None and "429" in str(e):
+                status_code = 429
             response_text = None
             if e.response is not None and getattr(e.response, "text", None):
                 try:

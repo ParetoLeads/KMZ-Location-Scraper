@@ -53,7 +53,7 @@ class Config:
     BOUNDING_BOX_BUFFER: float = 0.04  # Degrees buffer for bounding box
     
     # Delay Settings (in seconds)
-    OSM_QUERY_DELAY: int = int(os.getenv('OSM_QUERY_DELAY', '3'))  # Between different query types
+    OSM_QUERY_DELAY: int = int(os.getenv('OSM_QUERY_DELAY', '6'))  # Between primary/additional/special to avoid 504 from Overpass
     HIERARCHY_BATCH_DELAY: int = int(os.getenv('HIERARCHY_BATCH_DELAY', '3'))  # Between hierarchy batches
     GPT_BATCH_DELAY: int = int(os.getenv('GPT_BATCH_DELAY', '2'))  # Between GPT batches
     
@@ -105,4 +105,3 @@ class Config:
 
 # Global config instance
 config = Config()
- 

@@ -96,6 +96,8 @@ if 'tmp_kmz_path' not in st.session_state:
     st.session_state.tmp_kmz_path = None
 if 'diagnostic_run_id' not in st.session_state:
     st.session_state.diagnostic_run_id = 0
+if '_tick_done' not in st.session_state:
+    st.session_state._tick_done = set()  # set of (stage, batch_index) so we do one fast "tick" run per batch
 
 # Helper function to save processing state
 def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
@@ -117,6 +119,7 @@ def clear_processing_state():
     st.session_state.processing_config = None
     st.session_state.hierarchy_batch_index = 0
     st.session_state.population_batch_index = 0
+    st.session_state._tick_done = set()
     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
         try:
             os.unlink(st.session_state.tmp_kmz_path)
@@ -164,6 +167,7 @@ if uploaded_file is not None:
             st.session_state.hierarchy_batch_index = 0
             st.session_state.population_batch_index = 0
             st.session_state.diagnostic_run_id = 0
+            st.session_state._tick_done = set()
             
             # Create temporary file for KMZ
             with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
@@ -352,22 +356,32 @@ if uploaded_file is not None:
 
                 st.session_state.diagnostic_run_id = st.session_state.diagnostic_run_id + 1
                 run_id = st.session_state.diagnostic_run_id
-                locations = st.session_state.processing_locations
+                locations = st.session_state.processing_locations or []
                 batch_size = config.DEFAULT_BATCH_SIZE
                 chunk_size = config.DEFAULT_CHUNK_SIZE
                 stage = st.session_state.processing_stage
-                # Log RUN first so it persists even if this run is killed before creating the analyzer
-                ts = datetime.now().strftime("%H:%M:%S")
                 if stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
                     total_batches = (len(locations) + batch_size - 1) // batch_size if locations else 0
-                    progress_cb(f"[{ts}] RUN #{run_id} stage=hierarchy batch_index={idx} total_batches={total_batches}")
                 elif stage == "population":
                     idx = st.session_state.population_batch_index
-                    num_batches = (len(locations) + chunk_size - 1) // chunk_size if locations else 0
-                    progress_cb(f"[{ts}] RUN #{run_id} stage=population batch_index={idx} total_batches={num_batches}")
-                st.session_state.progress_messages = progress_messages.copy()
-                st.session_state.status_messages = status_messages.copy()
+                    total_batches = (len(locations) + chunk_size - 1) // chunk_size if locations else 0
+                else:
+                    idx = 0
+                    total_batches = 0
+
+                tick_done = st.session_state.get("_tick_done") or set()
+                tick_key = (stage, idx)
+                if tick_key not in tick_done:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch_index={idx} total_batches={total_batches}")
+                    progress_cb(f"[{ts}] CALL_START next batch {idx + 1}/{total_batches}")
+                    st.session_state.progress_messages = progress_messages.copy()
+                    st.session_state.status_messages = status_messages.copy()
+                    tick_done = set(tick_done)  # copy so we can mutate
+                    tick_done.add(tick_key)
+                    st.session_state._tick_done = tick_done
+                    st.rerun()
 
                 analyzer = create_analyzer_from_state(progress_cb, status_cb)
                 locations = st.session_state.processing_locations
@@ -375,7 +389,14 @@ if uploaded_file is not None:
                 if st.session_state.processing_stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
                     total_batches = (len(locations) + batch_size - 1) // batch_size
-                    batch = locations[idx * batch_size : (idx + 1) * batch_size]
+                    first_batch_size = config.HIERARCHY_FIRST_BATCH_SIZE
+                    if idx == 0:
+                        batch_start = 0
+                        batch_end = first_batch_size
+                    else:
+                        batch_start = first_batch_size + (idx - 1) * batch_size
+                        batch_end = batch_start + batch_size
+                    batch = locations[batch_start:batch_end]
                     if batch:
                         analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
                         analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
@@ -392,7 +413,11 @@ if uploaded_file is not None:
                         analyzer._log(f"Estimated remaining time: {estimated_time}")
                         time.sleep(config.HIERARCHY_BATCH_DELAY)
                     st.session_state.hierarchy_batch_index = idx + 1
-                    if (idx + 1) * batch_size >= len(locations):
+                    if idx == 0:
+                        processed_after_this_batch = first_batch_size
+                    else:
+                        processed_after_this_batch = first_batch_size + idx * batch_size
+                    if processed_after_this_batch >= len(locations):
                         analyzer._log("Finished retrieving administrative boundaries.")
                         analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
                         # Apply max_locations limit if set

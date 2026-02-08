@@ -96,6 +96,8 @@ if 'tmp_kmz_path' not in st.session_state:
     st.session_state.tmp_kmz_path = None
 if 'diagnostic_run_id' not in st.session_state:
     st.session_state.diagnostic_run_id = 0
+if '_commit_done' not in st.session_state:
+    st.session_state._commit_done = set()  # (stage, idx) for which we did the quick commit run
 
 # Helper function to save processing state
 def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
@@ -117,6 +119,7 @@ def clear_processing_state():
     st.session_state.processing_config = None
     st.session_state.hierarchy_batch_index = 0
     st.session_state.population_batch_index = 0
+    st.session_state._commit_done = set()
     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
         try:
             os.unlink(st.session_state.tmp_kmz_path)
@@ -166,6 +169,7 @@ if uploaded_file is not None:
             st.session_state.population_batch_index = 0
             st.session_state.diagnostic_run_id = 0
             st.session_state._logged_ai = False
+            st.session_state._commit_done = set()
 
             # Create temporary file for KMZ
             with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
@@ -368,8 +372,17 @@ if uploaded_file is not None:
                     idx = 0
                     total_batches = 0
 
-                ts = datetime.now().strftime("%H:%M:%S")
-                progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch {idx + 1}/{total_batches}")
+                # Two-phase: commit run (log RUN, save, rerun) so state persists even if work run is killed
+                commit_key = (stage, idx)
+                commit_done = st.session_state.get("_commit_done") or set()
+                if commit_key not in commit_done:
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch {idx + 1}/{total_batches}")
+                    progress_cb(f"[{ts}] CALL_START next batch {idx + 1}/{total_batches}")
+                    st.session_state.progress_messages = progress_messages.copy()
+                    st.session_state.status_messages = status_messages.copy()
+                    st.session_state._commit_done = set(commit_done) | {commit_key}
+                    st.rerun()
 
                 skip_ai_log = st.session_state.get("_logged_ai", False)
                 analyzer = create_analyzer_from_state(progress_cb, status_cb, skip_ai_status_log=skip_ai_log)

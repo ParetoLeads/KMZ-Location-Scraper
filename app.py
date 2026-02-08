@@ -362,9 +362,11 @@ if uploaded_file is not None:
                 batch_size = config.DEFAULT_BATCH_SIZE
                 chunk_size = config.DEFAULT_CHUNK_SIZE
                 stage = st.session_state.processing_stage
+                first_batch_size = config.HIERARCHY_FIRST_BATCH_SIZE
                 if stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
-                    total_batches = (len(locations) + batch_size - 1) // batch_size if locations else 0
+                    n = len(locations) if locations else 0
+                    total_batches = (1 + max(0, (n - first_batch_size + batch_size - 1) // batch_size)) if n else 0
                 elif stage == "population":
                     idx = st.session_state.population_batch_index
                     total_batches = (len(locations) + chunk_size - 1) // chunk_size if locations else 0
@@ -384,89 +386,115 @@ if uploaded_file is not None:
                     st.session_state._commit_done = set(commit_done) | {commit_key}
                     st.rerun()
 
-                skip_ai_log = st.session_state.get("_logged_ai", False)
-                analyzer = create_analyzer_from_state(progress_cb, status_cb, skip_ai_status_log=skip_ai_log)
-                st.session_state._logged_ai = True
-                locations = st.session_state.processing_locations
-
-                if st.session_state.processing_stage == "hierarchy":
-                    idx = st.session_state.hierarchy_batch_index
-                    total_batches = (len(locations) + batch_size - 1) // batch_size
-                    first_batch_size = config.HIERARCHY_FIRST_BATCH_SIZE
-                    if idx == 0:
-                        batch_start = 0
-                        batch_end = first_batch_size
-                    else:
-                        batch_start = first_batch_size + (idx - 1) * batch_size
-                        batch_end = batch_start + batch_size
-                    batch = locations[batch_start:batch_end]
-                    if batch:
-                        analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
-                        analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
-                        # Shorter timeout and fewer retries so this run finishes within Streamlit's execution limit
-                        hierarchy_timeout = getattr(config, "HIERARCHY_QUERY_TIMEOUT", 20)
-                        hierarchy_retries = getattr(config, "HIERARCHY_MAX_RETRIES_CHUNKED", 2)
-                        analyzer.fetch_admin_hierarchy_batch(
-                            batch,
-                            timeout_sec=hierarchy_timeout,
-                            max_retry_attempts=hierarchy_retries,
-                        )
-                        analyzer._log(f"CALL_END Overpass hierarchy batch {idx + 1}/{total_batches}")
-                        estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
-                        analyzer._log(f"Estimated remaining time: {estimated_time}")
-                        time.sleep(config.HIERARCHY_BATCH_DELAY)
-                    st.session_state.hierarchy_batch_index = idx + 1
-                    if idx == 0:
-                        processed_after_this_batch = first_batch_size
-                    else:
-                        processed_after_this_batch = first_batch_size + idx * batch_size
-                    if processed_after_this_batch >= len(locations):
-                        analyzer._log("Finished retrieving administrative boundaries.")
-                        analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
-                        # Apply max_locations limit if set
-                        max_loc = config.DEFAULT_MAX_LOCATIONS
-                        if max_loc > 0 and len(locations) > max_loc:
-                            analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
-                            st.session_state.processing_locations = locations[:max_loc]
-                            locations = st.session_state.processing_locations
-                        analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
-                        analyzer._log("\n--- Starting Population Estimation (GPT) ---")
-                        st.session_state.processing_stage = "population"
-                        st.session_state.population_batch_index = 0
-                    st.session_state.progress_messages = progress_messages
-                    st.session_state.status_messages = status_messages
+                cfg = st.session_state.processing_config
+                if not cfg:
+                    progress_cb("[ERROR] Processing config missing. Please start the analysis again.")
+                    st.session_state.progress_messages = progress_messages.copy()
+                    st.session_state.status_messages = status_messages.copy()
+                    st.error("Processing config missing. Click Cancel and start the analysis again.")
+                    st.rerun()
+                kmz_path = cfg.get("kmz_file")
+                if not kmz_path or not os.path.exists(kmz_path):
+                    progress_cb(f"[ERROR] KMZ file not found: {kmz_path}. Temp file may have been lost.")
+                    st.session_state.progress_messages = progress_messages.copy()
+                    st.session_state.status_messages = status_messages.copy()
+                    st.error("KMZ temp file was lost (e.g. app restarted). Please upload the file again and click Start Analysis.")
                     st.rerun()
 
-                elif st.session_state.processing_stage == "population":
-                    idx = st.session_state.population_batch_index
-                    num_batches = (len(locations) + chunk_size - 1) // chunk_size
-                    analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
-                    analyzer._log(f"CALL_START Population batch {idx + 1}/{num_batches}")
-                    analyzer.estimate_populations_single_batch(locations, idx)
-                    analyzer._log(f"CALL_END Population batch {idx + 1}/{num_batches}")
-                    if idx < num_batches - 1:
-                        time.sleep(config.GPT_BATCH_DELAY)
-                    st.session_state.population_batch_index = idx + 1
-                    if (idx + 1) * chunk_size >= len(locations):
-                        analyzer._log("CHECKPOINT: Stage 4 - Population estimation completed")
-                        analyzer.calculate_combined_populations(locations)
-                        st.session_state.processing_stage = "excel"
-                    st.session_state.progress_messages = progress_messages
-                    st.session_state.status_messages = status_messages
-                    st.rerun()
+                try:
+                    skip_ai_log = st.session_state.get("_logged_ai", False)
+                    analyzer = create_analyzer_from_state(progress_cb, status_cb, skip_ai_status_log=skip_ai_log)
+                    st.session_state._logged_ai = True
+                    locations = st.session_state.processing_locations
 
-                elif st.session_state.processing_stage == "excel":
-                    excel_data = analyzer.save_to_excel(locations)
-                    st.session_state.results = locations
-                    st.session_state.excel_data = excel_data
-                    st.session_state.progress_messages = progress_messages
-                    st.session_state.status_messages = status_messages
-                    progress_ui.mark_complete()
-                    clear_processing_state()
-                    if excel_data:
-                        st.success(f"✅ Successfully processed {len(locations)} locations!")
-                    else:
-                        st.warning("⚠️ Excel export failed, but results are available below.")
+                    if st.session_state.processing_stage == "hierarchy":
+                        idx = st.session_state.hierarchy_batch_index
+                        n_loc = len(locations) if locations else 0
+                        total_batches = (1 + max(0, (n_loc - first_batch_size + batch_size - 1) // batch_size)) if n_loc else 0
+                        if idx == 0:
+                            batch_start = 0
+                            batch_end = first_batch_size
+                        else:
+                            batch_start = first_batch_size + (idx - 1) * batch_size
+                            batch_end = batch_start + batch_size
+                        batch = locations[batch_start:batch_end]
+                        if batch:
+                            analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
+                            analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
+                            hierarchy_timeout = getattr(config, "HIERARCHY_QUERY_TIMEOUT", 20)
+                            hierarchy_retries = getattr(config, "HIERARCHY_MAX_RETRIES_CHUNKED", 2)
+                            analyzer.fetch_admin_hierarchy_batch(
+                                batch,
+                                timeout_sec=hierarchy_timeout,
+                                max_retry_attempts=hierarchy_retries,
+                            )
+                            analyzer._log(f"CALL_END Overpass hierarchy batch {idx + 1}/{total_batches}")
+                            estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
+                            analyzer._log(f"Estimated remaining time: {estimated_time}")
+                            time.sleep(config.HIERARCHY_BATCH_DELAY)
+                        st.session_state.hierarchy_batch_index = idx + 1
+                        if idx == 0:
+                            processed_after_this_batch = first_batch_size
+                        else:
+                            processed_after_this_batch = first_batch_size + idx * batch_size
+                        if processed_after_this_batch >= len(locations):
+                            analyzer._log("Finished retrieving administrative boundaries.")
+                            analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
+                            max_loc = config.DEFAULT_MAX_LOCATIONS
+                            if max_loc > 0 and len(locations) > max_loc:
+                                analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
+                                st.session_state.processing_locations = locations[:max_loc]
+                                locations = st.session_state.processing_locations
+                            analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
+                            analyzer._log("\n--- Starting Population Estimation (GPT) ---")
+                            st.session_state.processing_stage = "population"
+                            st.session_state.population_batch_index = 0
+                        st.session_state.progress_messages = progress_messages
+                        st.session_state.status_messages = status_messages
+                        st.rerun()
+
+                    elif st.session_state.processing_stage == "population":
+                        idx = st.session_state.population_batch_index
+                        num_batches = (len(locations) + chunk_size - 1) // chunk_size
+                        analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
+                        analyzer._log(f"CALL_START Population batch {idx + 1}/{num_batches}")
+                        analyzer.estimate_populations_single_batch(locations, idx)
+                        analyzer._log(f"CALL_END Population batch {idx + 1}/{num_batches}")
+                        if idx < num_batches - 1:
+                            time.sleep(config.GPT_BATCH_DELAY)
+                        st.session_state.population_batch_index = idx + 1
+                        if (idx + 1) * chunk_size >= len(locations):
+                            analyzer._log("CHECKPOINT: Stage 4 - Population estimation completed")
+                            analyzer.calculate_combined_populations(locations)
+                            st.session_state.processing_stage = "excel"
+                        st.session_state.progress_messages = progress_messages
+                        st.session_state.status_messages = status_messages
+                        st.rerun()
+
+                    elif st.session_state.processing_stage == "excel":
+                        excel_data = analyzer.save_to_excel(locations)
+                        st.session_state.results = locations
+                        st.session_state.excel_data = excel_data
+                        st.session_state.progress_messages = progress_messages
+                        st.session_state.status_messages = status_messages
+                        progress_ui.mark_complete()
+                        clear_processing_state()
+                        if excel_data:
+                            st.success(f"✅ Successfully processed {len(locations)} locations!")
+                        else:
+                            st.warning("⚠️ Excel export failed, but results are available below.")
+                        st.rerun()
+
+                except Exception as e:
+                    import traceback as tb
+                    err_msg = str(e)
+                    progress_cb(f"[ERROR] {err_msg}")
+                    progress_cb(tb.format_exc())
+                    st.session_state.progress_messages = progress_messages.copy()
+                    st.session_state.status_messages = status_messages.copy()
+                    st.error(f"Error during processing: {err_msg}")
+                    with st.expander("Error details"):
+                        st.code(tb.format_exc())
                     st.rerun()
 
 # Display results

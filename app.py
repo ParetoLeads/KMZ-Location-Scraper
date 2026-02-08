@@ -9,6 +9,7 @@ from config import config
 from utils.validators import validate_kmz_file, validate_file_size, validate_api_key
 from utils.exceptions import ValidationError, KMZParseError
 from utils.progress_tracker import ProgressTracker, ProgressUI, create_progress_callback
+import time
 
 # Page configuration
 st.set_page_config(
@@ -77,6 +78,48 @@ if 'status_messages' not in st.session_state:
     st.session_state.status_messages = []
 if 'polygon_points' not in st.session_state:
     st.session_state.polygon_points = None
+# Processing state for handling timeouts
+if 'processing_state' not in st.session_state:
+    st.session_state.processing_state = None  # Will store: stage, locations, analyzer_config, etc.
+if 'processing_stage' not in st.session_state:
+    st.session_state.processing_stage = None  # 'kmz', 'osm', 'hierarchy', 'population', 'excel', 'complete'
+if 'processing_locations' not in st.session_state:
+    st.session_state.processing_locations = None  # List of locations being processed
+if 'processing_config' not in st.session_state:
+    st.session_state.processing_config = None  # Analyzer configuration
+if 'hierarchy_batch_index' not in st.session_state:
+    st.session_state.hierarchy_batch_index = 0
+if 'population_batch_index' not in st.session_state:
+    st.session_state.population_batch_index = 0
+if 'tmp_kmz_path' not in st.session_state:
+    st.session_state.tmp_kmz_path = None
+
+# Helper function to save processing state
+def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
+    """Save current processing state to session state."""
+    st.session_state.processing_stage = stage
+    st.session_state.processing_locations = locations
+    st.session_state.processing_config = config_dict
+    st.session_state.hierarchy_batch_index = hierarchy_idx
+    st.session_state.population_batch_index = population_idx
+    # Force rerun to continue processing
+    st.rerun()
+
+# Helper function to clear processing state
+def clear_processing_state():
+    """Clear all processing state."""
+    st.session_state.processing = False
+    st.session_state.processing_stage = None
+    st.session_state.processing_locations = None
+    st.session_state.processing_config = None
+    st.session_state.hierarchy_batch_index = 0
+    st.session_state.population_batch_index = 0
+    if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
+        try:
+            os.unlink(st.session_state.tmp_kmz_path)
+        except:
+            pass
+    st.session_state.tmp_kmz_path = None
 
 # Process button
 if uploaded_file is not None:
@@ -90,11 +133,17 @@ if uploaded_file is not None:
             st.session_state.processing = True
             st.session_state.results = None
             st.session_state.excel_data = None
+            # Reset processing state for new run
+            st.session_state.processing_stage = None
+            st.session_state.processing_locations = None
+            st.session_state.hierarchy_batch_index = 0
+            st.session_state.population_batch_index = 0
             
             # Create temporary file for KMZ
             with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
                 tmp_file.write(uploaded_file.read())
                 tmp_kmz_path = tmp_file.name
+            st.session_state.tmp_kmz_path = tmp_kmz_path
             
             # Validate KMZ file
             kmz_valid = True
@@ -175,16 +224,24 @@ if uploaded_file is not None:
                             status_text_container=status_text
                         )
                         
-                        # Create callbacks
-                        progress_callback = create_progress_callback(
-                            tracker=progress_tracker,
-                            ui=progress_ui,
-                            progress_messages=progress_messages
-                        )
+                        # Create callbacks that save to session state in real-time
+                        # This ensures logs survive even if script times out
+                        def progress_callback_with_save(msg: str) -> None:
+                            progress_messages.append(msg)
+                            # Immediately save to session state to survive timeouts
+                            st.session_state.progress_messages = progress_messages.copy()
+                            # Also update UI
+                            progress_tracker.update_from_message(msg)
+                            progress_ui.update(progress_tracker, msg)
+                        
+                        progress_callback = progress_callback_with_save
                         
                         def status_callback(msg: str) -> None:
                             status_messages.append(msg)
                             progress_messages.append(msg)  # Also add to progress messages for log
+                            # Immediately save to session state to survive timeouts
+                            st.session_state.status_messages = status_messages.copy()
+                            st.session_state.progress_messages = progress_messages.copy()
                         
                         # Initialize analyzer
                         try:
@@ -206,8 +263,18 @@ if uploaded_file is not None:
                                 status_callback=status_callback
                             )
                             
-                            # Run analysis
+                            # Run analysis with progress saving
+                            # Save progress messages periodically to survive timeouts
+                            st.session_state.progress_messages = progress_messages
+                            st.session_state.status_messages = status_messages
+                            
+                            # Run analysis (this may take a long time for large datasets)
+                            # Streamlit may timeout, but we've saved progress messages above
                             results = analyzer.run()
+                            
+                            # Immediately save progress after run completes
+                            st.session_state.progress_messages = progress_messages
+                            st.session_state.status_messages = status_messages
                             
                             if results:
                                 # Update progress to 100%
@@ -252,13 +319,20 @@ if uploaded_file is not None:
                                 st.code(error_traceback)
                             progress_messages.append(f"ERROR: {str(e)}")
                             progress_messages.append(error_traceback)
+                            st.session_state.progress_messages = progress_messages
+                            st.session_state.status_messages = status_messages
                             main_progress.progress(0)
+                            clear_processing_state()
                         
                         finally:
-                            # Clean up temp file
-                            if 'tmp_kmz_path' in locals() and os.path.exists(tmp_kmz_path):
-                                os.unlink(tmp_kmz_path)
-                            st.session_state.processing = False
+                            # Only clean up temp file if processing is complete (not if we're resuming)
+                            if not st.session_state.processing:
+                                if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
+                                    try:
+                                        os.unlink(st.session_state.tmp_kmz_path)
+                                    except:
+                                        pass
+                                    st.session_state.tmp_kmz_path = None
                 
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")

@@ -10,6 +10,7 @@ from utils.validators import validate_kmz_file, validate_file_size, validate_api
 from utils.exceptions import ValidationError, KMZParseError
 from utils.progress_tracker import ProgressTracker, ProgressUI, create_progress_callback
 import time
+from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -349,18 +350,31 @@ if uploaded_file is not None:
                     clear_processing_state()
                     st.rerun()
 
-                analyzer = create_analyzer_from_state(progress_cb, status_cb)
+                st.session_state.diagnostic_run_id = st.session_state.diagnostic_run_id + 1
+                run_id = st.session_state.diagnostic_run_id
                 locations = st.session_state.processing_locations
                 batch_size = config.DEFAULT_BATCH_SIZE
                 chunk_size = config.DEFAULT_CHUNK_SIZE
+                stage = st.session_state.processing_stage
+                # Log RUN first so it persists even if this run is killed before creating the analyzer
+                ts = datetime.now().strftime("%H:%M:%S")
+                if stage == "hierarchy":
+                    idx = st.session_state.hierarchy_batch_index
+                    total_batches = (len(locations) + batch_size - 1) // batch_size if locations else 0
+                    progress_cb(f"[{ts}] RUN #{run_id} stage=hierarchy batch_index={idx} total_batches={total_batches}")
+                elif stage == "population":
+                    idx = st.session_state.population_batch_index
+                    num_batches = (len(locations) + chunk_size - 1) // chunk_size if locations else 0
+                    progress_cb(f"[{ts}] RUN #{run_id} stage=population batch_index={idx} total_batches={num_batches}")
+                st.session_state.progress_messages = progress_messages.copy()
+                st.session_state.status_messages = status_messages.copy()
 
-                st.session_state.diagnostic_run_id = st.session_state.diagnostic_run_id + 1
-                run_id = st.session_state.diagnostic_run_id
+                analyzer = create_analyzer_from_state(progress_cb, status_cb)
+                locations = st.session_state.processing_locations
 
                 if st.session_state.processing_stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
                     total_batches = (len(locations) + batch_size - 1) // batch_size
-                    analyzer._log(f"RUN #{run_id} stage=hierarchy batch_index={idx} total_batches={total_batches}")
                     batch = locations[idx * batch_size : (idx + 1) * batch_size]
                     if batch:
                         analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
@@ -398,7 +412,6 @@ if uploaded_file is not None:
                 elif st.session_state.processing_stage == "population":
                     idx = st.session_state.population_batch_index
                     num_batches = (len(locations) + chunk_size - 1) // chunk_size
-                    analyzer._log(f"RUN #{run_id} stage=population batch_index={idx} total_batches={num_batches}")
                     analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
                     analyzer._log(f"CALL_START Population batch {idx + 1}/{num_batches}")
                     analyzer.estimate_populations_single_batch(locations, idx)

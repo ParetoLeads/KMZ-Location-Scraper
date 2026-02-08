@@ -1557,3 +1557,4 @@ class LocationAnalyzer:
             self._log(f"CHECKPOINT: Processing failed after {elapsed_time:.1f} seconds")
             traceback.print_exc()
             return None
+ 

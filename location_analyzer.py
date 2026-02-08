@@ -627,15 +627,18 @@ class LocationAnalyzer:
 
         def _execute_hierarchy_query() -> Dict[str, Any]:
             """Execute the hierarchy query."""
+            self._log(f"[Overpass] POST start url={self.overpass_url} timeout={timeout + buffer}s")
             response = requests.post(
                 self.overpass_url,
                 data=query,
                 timeout=timeout + buffer
             )
+            self._log(f"[Overpass] POST done status={response.status_code}")
             response.raise_for_status()
             return response.json()
         
         try:
+            self._log(f"[Overpass] execute_with_retry max_attempts={max_attempts}")
             data = execute_with_retry(
                 _execute_hierarchy_query,
                 max_attempts=max_attempts,

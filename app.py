@@ -357,7 +357,14 @@ if uploaded_file is not None:
                     batch = locations[idx * batch_size : (idx + 1) * batch_size]
                     if batch:
                         analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
-                        analyzer.fetch_admin_hierarchy_batch(batch)
+                        # Shorter timeout and fewer retries so this run finishes within Streamlit's execution limit
+                        hierarchy_timeout = getattr(config, "HIERARCHY_QUERY_TIMEOUT", 20)
+                        hierarchy_retries = getattr(config, "HIERARCHY_MAX_RETRIES_CHUNKED", 2)
+                        analyzer.fetch_admin_hierarchy_batch(
+                            batch,
+                            timeout_sec=hierarchy_timeout,
+                            max_retry_attempts=hierarchy_retries,
+                        )
                         estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
                         analyzer._log(f"Estimated remaining time: {estimated_time}")
                         time.sleep(config.HIERARCHY_BATCH_DELAY)

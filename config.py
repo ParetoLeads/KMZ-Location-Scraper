@@ -27,9 +27,10 @@ class Config:
         return self.PRIMARY_PLACE_TYPES + self.ADDITIONAL_PLACE_TYPES + self.SPECIAL_PLACE_TYPES
     
     # API Settings
+    # Overpass API base URL. Set OVERPASS_URL or OSM_OVERPASS_URL to an alternative (e.g. https://overpass.private.coffee/api/interpreter) to reduce 504 Gateway Timeout errors.
     OSM_OVERPASS_URL: str = os.getenv(
-        'OSM_OVERPASS_URL',
-        'http://overpass-api.de/api/interpreter'
+        'OVERPASS_URL',
+        os.getenv('OSM_OVERPASS_URL', 'http://overpass-api.de/api/interpreter')
     )
     OSM_API_TIMEOUT: int = int(os.getenv('OSM_API_TIMEOUT', '60'))
     OSM_API_TIMEOUT_BUFFER: int = 10  # Additional seconds for timeout buffer
@@ -42,6 +43,7 @@ class Config:
     # Processing Settings
     DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '25'))
     DEFAULT_BATCH_SIZE: int = 5   # For hierarchy (Overpass); small so each rerun finishes within Streamlit timeout
+    HIERARCHY_FIRST_BATCH_SIZE: int = 1   # First hierarchy batch size (minimal so first work run completes within timeout)
     HIERARCHY_QUERY_TIMEOUT: int = 20   # Shorter timeout for chunked hierarchy queries (seconds)
     HIERARCHY_MAX_RETRIES_CHUNKED: int = 2   # Max retries per batch in chunked mode to avoid run timeout
     DEFAULT_MAX_LOCATIONS: int = int(os.getenv('DEFAULT_MAX_LOCATIONS', '0'))  # 0 = no limit

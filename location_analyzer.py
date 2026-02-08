@@ -542,10 +542,19 @@ class LocationAnalyzer:
                 
         return unique_locations
     
-    def fetch_admin_hierarchy_batch(self, locations: List[Dict]) -> List[Dict]:
-        """Get administrative hierarchy for multiple locations in a single batch request with unlimited retry. Public for chunked/rerun processing."""
+    def fetch_admin_hierarchy_batch(
+        self,
+        locations: List[Dict],
+        timeout_sec: Optional[int] = None,
+        max_retry_attempts: Optional[int] = None,
+    ) -> List[Dict]:
+        """Get administrative hierarchy for multiple locations in a single batch request with retry.
+        Public for chunked/rerun processing. Use timeout_sec and max_retry_attempts in chunked mode to avoid run timeout."""
         if not locations:
             return locations
+
+        timeout = timeout_sec if timeout_sec is not None else config.OSM_API_TIMEOUT
+        max_attempts = max_retry_attempts if max_retry_attempts is not None else config.MAX_RETRY_ATTEMPTS
 
         query_parts = []
         for i, location in enumerate(locations):
@@ -559,7 +568,7 @@ class LocationAnalyzer:
             return locations
 
         query = f"""
-        [out:json][timeout:{config.OSM_API_TIMEOUT}];
+        [out:json][timeout:{timeout}];
         {" ".join(query_parts)}
         out tags;
         """
@@ -607,12 +616,14 @@ class LocationAnalyzer:
                 # Cache the hierarchy
                 set_hierarchy_cache(lat, lon, hierarchy)
         
+        buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
+
         def _execute_hierarchy_query() -> Dict[str, Any]:
             """Execute the hierarchy query."""
             response = requests.post(
                 self.overpass_url,
                 data=query,
-                timeout=config.OSM_API_TIMEOUT + config.OSM_API_TIMEOUT_BUFFER
+                timeout=timeout + buffer
             )
             response.raise_for_status()
             return response.json()
@@ -620,6 +631,7 @@ class LocationAnalyzer:
         try:
             data = execute_with_retry(
                 _execute_hierarchy_query,
+                max_attempts=max_attempts,
                 log_callback=lambda msg: self._log(f"Hierarchy query: {msg}")
             )
             _process_hierarchy_data(data)

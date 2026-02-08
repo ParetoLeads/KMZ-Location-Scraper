@@ -363,6 +363,8 @@ if uploaded_file is not None:
                 chunk_size = config.DEFAULT_CHUNK_SIZE
                 stage = st.session_state.processing_stage
                 first_batch_size = config.HIERARCHY_FIRST_BATCH_SIZE
+                _ts = datetime.now().strftime("%H:%M:%S")
+                progress_cb(f"[{_ts}] [SM] ENTER run_id={run_id} stage={stage} hierarchy_idx={st.session_state.hierarchy_batch_index} population_idx={st.session_state.population_batch_index} locations={len(locations)}")
                 if stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
                     n = len(locations) if locations else 0
@@ -377,15 +379,22 @@ if uploaded_file is not None:
                 # Two-phase: commit run (log RUN, save, rerun) so state persists even if work run is killed
                 commit_key = (stage, idx)
                 commit_done = st.session_state.get("_commit_done") or set()
+                in_commit_done = commit_key in commit_done
+                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] commit_key=({stage},{idx}) commit_done_size={len(commit_done)} in_commit_done={in_commit_done} doing_commit_run={not in_commit_done}")
                 if commit_key not in commit_done:
                     ts = datetime.now().strftime("%H:%M:%S")
+                    progress_cb(f"[{ts}] [SM] COMMIT: writing RUN and CALL_START, then st.rerun()")
                     progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch {idx + 1}/{total_batches}")
                     progress_cb(f"[{ts}] CALL_START next batch {idx + 1}/{total_batches}")
                     st.session_state.progress_messages = progress_messages.copy()
                     st.session_state.status_messages = status_messages.copy()
                     st.session_state._commit_done = set(commit_done) | {commit_key}
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] COMMIT: state saved, calling st.rerun()")
+                    st.session_state.progress_messages = progress_messages.copy()
+                    st.session_state.status_messages = status_messages.copy()
                     st.rerun()
 
+                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] WORK: checking processing_config and kmz file...")
                 cfg = st.session_state.processing_config
                 if not cfg:
                     progress_cb("[ERROR] Processing config missing. Please start the analysis again.")
@@ -402,10 +411,12 @@ if uploaded_file is not None:
                     st.rerun()
 
                 try:
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] WORK: creating analyzer (skip_ai_log={st.session_state.get('_logged_ai', False)})...")
                     skip_ai_log = st.session_state.get("_logged_ai", False)
                     analyzer = create_analyzer_from_state(progress_cb, status_cb, skip_ai_status_log=skip_ai_log)
                     st.session_state._logged_ai = True
                     locations = st.session_state.processing_locations
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] WORK: analyzer created, entering stage branch (stage={st.session_state.processing_stage})")
 
                     if st.session_state.processing_stage == "hierarchy":
                         idx = st.session_state.hierarchy_batch_index
@@ -418,16 +429,19 @@ if uploaded_file is not None:
                             batch_start = first_batch_size + (idx - 1) * batch_size
                             batch_end = batch_start + batch_size
                         batch = locations[batch_start:batch_end]
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: idx={idx} batch_start={batch_start} batch_end={batch_end} len(batch)={len(batch)} total_batches={total_batches}")
                         if batch:
-                            analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
-                            analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
                             hierarchy_timeout = getattr(config, "HIERARCHY_QUERY_TIMEOUT", 20)
                             hierarchy_retries = getattr(config, "HIERARCHY_MAX_RETRIES_CHUNKED", 2)
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: calling fetch_admin_hierarchy_batch timeout={hierarchy_timeout}s retries={hierarchy_retries} ...")
+                            analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
+                            analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
                             analyzer.fetch_admin_hierarchy_batch(
                                 batch,
                                 timeout_sec=hierarchy_timeout,
                                 max_retry_attempts=hierarchy_retries,
                             )
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: fetch_admin_hierarchy_batch returned ok")
                             analyzer._log(f"CALL_END Overpass hierarchy batch {idx + 1}/{total_batches}")
                             estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
                             analyzer._log(f"Estimated remaining time: {estimated_time}")
@@ -449,6 +463,7 @@ if uploaded_file is not None:
                             analyzer._log("\n--- Starting Population Estimation (GPT) ---")
                             st.session_state.processing_stage = "population"
                             st.session_state.population_batch_index = 0
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: saving state and st.rerun()")
                         st.session_state.progress_messages = progress_messages
                         st.session_state.status_messages = status_messages
                         st.rerun()
@@ -488,6 +503,7 @@ if uploaded_file is not None:
                 except Exception as e:
                     import traceback as tb
                     err_msg = str(e)
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION type={type(e).__name__} msg={err_msg[:200]}")
                     progress_cb(f"[ERROR] {err_msg}")
                     progress_cb(tb.format_exc())
                     st.session_state.progress_messages = progress_messages.copy()
@@ -868,25 +884,28 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
                 else:
                     st.text(f"⚪ {stage} (not started)")
         
-        # Diagnostics: last exception and last position (RUN / CALL_START / CALL_END)
+        # Diagnostics: last exception and last position (RUN / CALL_START / CALL_END, or last [SM] line)
         st.markdown("#### Diagnostics")
         last_diagnostic = None
         last_position = None
+        last_sm = None
         for msg in reversed(all_messages):
             if "DIAGNOSTIC:" in msg and last_diagnostic is None:
                 last_diagnostic = msg
             if ("RUN " in msg or "CALL_START" in msg or "CALL_END" in msg) and last_position is None:
                 last_position = msg
-            if last_diagnostic is not None and last_position is not None:
-                break
+            if "[SM]" in msg and last_sm is None:
+                last_sm = msg
         if last_diagnostic:
             st.warning(f"**Last exception:** {last_diagnostic}")
         else:
             st.text("Last exception: none")
         if last_position:
             st.info(f"**Last position:** {last_position}")
+        elif last_sm:
+            st.info(f"**Last position (state machine):** {last_sm}")
         else:
-            st.text("Last position: (no RUN/CALL_START/CALL_END seen)")
+            st.text("Last position: (no RUN/CALL_START/CALL_END or [SM] seen)")
         
         # Show error summary if there are errors
         if errors:
@@ -913,6 +932,8 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
                 highlighted_log.append(f'<span style="color: orange; font-weight: bold;">{line}</span>')
             elif 'CHECKPOINT:' in line.upper():
                 highlighted_log.append(f'<span style="color: blue; font-weight: bold;">{line}</span>')
+            elif '[SM]' in line or '[Overpass]' in line:
+                highlighted_log.append(f'<span style="color: #0066cc; font-weight: bold;">{line}</span>')
             elif 'DIAGNOSTIC:' in line or 'RUN #' in line or 'CALL_START' in line or 'CALL_END' in line:
                 highlighted_log.append(f'<span style="color: #006600; font-weight: bold;">{line}</span>')
             else:

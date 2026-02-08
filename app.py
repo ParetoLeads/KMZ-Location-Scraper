@@ -96,8 +96,6 @@ if 'tmp_kmz_path' not in st.session_state:
     st.session_state.tmp_kmz_path = None
 if 'diagnostic_run_id' not in st.session_state:
     st.session_state.diagnostic_run_id = 0
-if '_tick_done' not in st.session_state:
-    st.session_state._tick_done = set()  # set of (stage, batch_index) so we do one fast "tick" run per batch
 
 # Helper function to save processing state
 def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
@@ -119,7 +117,6 @@ def clear_processing_state():
     st.session_state.processing_config = None
     st.session_state.hierarchy_batch_index = 0
     st.session_state.population_batch_index = 0
-    st.session_state._tick_done = set()
     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
         try:
             os.unlink(st.session_state.tmp_kmz_path)
@@ -128,7 +125,7 @@ def clear_processing_state():
     st.session_state.tmp_kmz_path = None
 
 
-def create_analyzer_from_state(progress_callback, status_callback):
+def create_analyzer_from_state(progress_callback, status_callback, skip_ai_status_log: bool = False):
     """Create LocationAnalyzer from processing_config and config. Used on each rerun."""
     cfg = st.session_state.processing_config
     return LocationAnalyzer(
@@ -147,6 +144,7 @@ def create_analyzer_from_state(progress_callback, status_callback):
         special_place_types=config.SPECIAL_PLACE_TYPES,
         progress_callback=progress_callback,
         status_callback=status_callback,
+        skip_ai_status_log=skip_ai_status_log,
     )
 
 # Process button
@@ -167,8 +165,8 @@ if uploaded_file is not None:
             st.session_state.hierarchy_batch_index = 0
             st.session_state.population_batch_index = 0
             st.session_state.diagnostic_run_id = 0
-            st.session_state._tick_done = set()
-            
+            st.session_state._logged_ai = False
+
             # Create temporary file for KMZ
             with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
                 tmp_file.write(uploaded_file.read())
@@ -370,20 +368,12 @@ if uploaded_file is not None:
                     idx = 0
                     total_batches = 0
 
-                tick_done = st.session_state.get("_tick_done") or set()
-                tick_key = (stage, idx)
-                if tick_key not in tick_done:
-                    ts = datetime.now().strftime("%H:%M:%S")
-                    progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch_index={idx} total_batches={total_batches}")
-                    progress_cb(f"[{ts}] CALL_START next batch {idx + 1}/{total_batches}")
-                    st.session_state.progress_messages = progress_messages.copy()
-                    st.session_state.status_messages = status_messages.copy()
-                    tick_done = set(tick_done)  # copy so we can mutate
-                    tick_done.add(tick_key)
-                    st.session_state._tick_done = tick_done
-                    st.rerun()
+                ts = datetime.now().strftime("%H:%M:%S")
+                progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch {idx + 1}/{total_batches}")
 
-                analyzer = create_analyzer_from_state(progress_cb, status_cb)
+                skip_ai_log = st.session_state.get("_logged_ai", False)
+                analyzer = create_analyzer_from_state(progress_cb, status_cb, skip_ai_status_log=skip_ai_log)
+                st.session_state._logged_ai = True
                 locations = st.session_state.processing_locations
 
                 if st.session_state.processing_stage == "hierarchy":

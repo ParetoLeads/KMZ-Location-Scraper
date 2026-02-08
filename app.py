@@ -93,6 +93,8 @@ if 'population_batch_index' not in st.session_state:
     st.session_state.population_batch_index = 0
 if 'tmp_kmz_path' not in st.session_state:
     st.session_state.tmp_kmz_path = None
+if 'diagnostic_run_id' not in st.session_state:
+    st.session_state.diagnostic_run_id = 0
 
 # Helper function to save processing state
 def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
@@ -160,6 +162,7 @@ if uploaded_file is not None:
             st.session_state.processing_locations = None
             st.session_state.hierarchy_batch_index = 0
             st.session_state.population_batch_index = 0
+            st.session_state.diagnostic_run_id = 0
             
             # Create temporary file for KMZ
             with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
@@ -351,12 +354,17 @@ if uploaded_file is not None:
                 batch_size = config.DEFAULT_BATCH_SIZE
                 chunk_size = config.DEFAULT_CHUNK_SIZE
 
+                st.session_state.diagnostic_run_id = st.session_state.diagnostic_run_id + 1
+                run_id = st.session_state.diagnostic_run_id
+
                 if st.session_state.processing_stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
                     total_batches = (len(locations) + batch_size - 1) // batch_size
+                    analyzer._log(f"RUN #{run_id} stage=hierarchy batch_index={idx} total_batches={total_batches}")
                     batch = locations[idx * batch_size : (idx + 1) * batch_size]
                     if batch:
                         analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
+                        analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
                         # Shorter timeout and fewer retries so this run finishes within Streamlit's execution limit
                         hierarchy_timeout = getattr(config, "HIERARCHY_QUERY_TIMEOUT", 20)
                         hierarchy_retries = getattr(config, "HIERARCHY_MAX_RETRIES_CHUNKED", 2)
@@ -365,6 +373,7 @@ if uploaded_file is not None:
                             timeout_sec=hierarchy_timeout,
                             max_retry_attempts=hierarchy_retries,
                         )
+                        analyzer._log(f"CALL_END Overpass hierarchy batch {idx + 1}/{total_batches}")
                         estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
                         analyzer._log(f"Estimated remaining time: {estimated_time}")
                         time.sleep(config.HIERARCHY_BATCH_DELAY)
@@ -389,8 +398,11 @@ if uploaded_file is not None:
                 elif st.session_state.processing_stage == "population":
                     idx = st.session_state.population_batch_index
                     num_batches = (len(locations) + chunk_size - 1) // chunk_size
+                    analyzer._log(f"RUN #{run_id} stage=population batch_index={idx} total_batches={num_batches}")
                     analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
+                    analyzer._log(f"CALL_START Population batch {idx + 1}/{num_batches}")
                     analyzer.estimate_populations_single_batch(locations, idx)
+                    analyzer._log(f"CALL_END Population batch {idx + 1}/{num_batches}")
                     if idx < num_batches - 1:
                         time.sleep(config.GPT_BATCH_DELAY)
                     st.session_state.population_batch_index = idx + 1
@@ -785,6 +797,26 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
                 else:
                     st.text(f"⚪ {stage} (not started)")
         
+        # Diagnostics: last exception and last position (RUN / CALL_START / CALL_END)
+        st.markdown("#### Diagnostics")
+        last_diagnostic = None
+        last_position = None
+        for msg in reversed(all_messages):
+            if "DIAGNOSTIC:" in msg and last_diagnostic is None:
+                last_diagnostic = msg
+            if ("RUN " in msg or "CALL_START" in msg or "CALL_END" in msg) and last_position is None:
+                last_position = msg
+            if last_diagnostic is not None and last_position is not None:
+                break
+        if last_diagnostic:
+            st.warning(f"**Last exception:** {last_diagnostic}")
+        else:
+            st.text("Last exception: none")
+        if last_position:
+            st.info(f"**Last position:** {last_position}")
+        else:
+            st.text("Last position: (no RUN/CALL_START/CALL_END seen)")
+        
         # Show error summary if there are errors
         if errors:
             st.markdown("#### ❌ Error Summary")
@@ -810,6 +842,8 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
                 highlighted_log.append(f'<span style="color: orange; font-weight: bold;">{line}</span>')
             elif 'CHECKPOINT:' in line.upper():
                 highlighted_log.append(f'<span style="color: blue; font-weight: bold;">{line}</span>')
+            elif 'DIAGNOSTIC:' in line or 'RUN #' in line or 'CALL_START' in line or 'CALL_END' in line:
+                highlighted_log.append(f'<span style="color: #006600; font-weight: bold;">{line}</span>')
             else:
                 highlighted_log.append(line)
         

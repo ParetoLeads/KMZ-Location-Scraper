@@ -46,7 +46,7 @@ def retry_with_backoff(
                     return func(*args, **kwargs)
                 except requests.exceptions.HTTPError as e:
                     last_exception = e
-                    wait_time = (attempt + 1) * base_delay
+                    wait_time = base_delay  # Constant delay, not incremental
                     
                     if attempt < max_attempts - 1:
                         status_code = e.response.status_code if e.response else None
@@ -67,7 +67,7 @@ def retry_with_backoff(
                         
                 except requests.exceptions.Timeout:
                     last_exception = TimeoutError("Request timeout")
-                    wait_time = (attempt + 1) * base_delay
+                    wait_time = base_delay  # Constant delay, not incremental
                     
                     if attempt < max_attempts - 1:
                         error_msg = (
@@ -86,7 +86,7 @@ def retry_with_backoff(
                         
                 except requests.exceptions.RequestException as e:
                     last_exception = e
-                    wait_time = (attempt + 1) * base_delay
+                    wait_time = base_delay  # Constant delay, not incremental
                     
                     if attempt < max_attempts - 1:
                         error_msg = (
@@ -105,7 +105,7 @@ def retry_with_backoff(
                         
                 except Exception as e:
                     last_exception = e
-                    wait_time = (attempt + 1) * base_delay
+                    wait_time = base_delay  # Constant delay, not incremental
                     
                     if attempt < max_attempts - 1:
                         error_msg = (
@@ -223,7 +223,7 @@ def execute_with_retry(
             return func(*args, **kwargs)
         except requests.exceptions.HTTPError as e:
             last_exception = e
-            wait_time = (attempt + 1) * base_delay
+            wait_time = base_delay  # Constant delay, not incremental
             status_code = e.response.status_code if (e.response and hasattr(e.response, 'status_code')) else None
             if status_code is None and e.response is not None:
                 try:
@@ -255,7 +255,7 @@ def execute_with_retry(
                 
         except requests.exceptions.Timeout as e:
             last_exception = e
-            wait_time = (attempt + 1) * base_delay
+            wait_time = base_delay  # Constant delay, not incremental
             _log_diagnostic(e, log_callback)
             if attempt < max_attempts - 1:
                 error_msg = (
@@ -274,7 +274,7 @@ def execute_with_retry(
                 
         except requests.exceptions.RequestException as e:
             last_exception = e
-            wait_time = (attempt + 1) * base_delay
+            wait_time = base_delay  # Constant delay, not incremental
             _log_diagnostic(e, log_callback)
             if attempt < max_attempts - 1:
                 error_msg = (
@@ -293,7 +293,7 @@ def execute_with_retry(
                 
         except Exception as e:
             last_exception = e
-            wait_time = (attempt + 1) * base_delay
+            wait_time = base_delay  # Constant delay, not incremental
             _log_diagnostic(e, log_callback)
             if attempt < max_attempts - 1:
                 error_msg = (

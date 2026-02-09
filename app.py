@@ -98,6 +98,10 @@ if 'diagnostic_run_id' not in st.session_state:
     st.session_state.diagnostic_run_id = 0
 if '_commit_done' not in st.session_state:
     st.session_state._commit_done = set()  # (stage, idx) for which we did the quick commit run
+if 'hierarchy_failed_batches' not in st.session_state:
+    st.session_state.hierarchy_failed_batches = []  # List of (batch_idx, locations) tuples
+if 'hierarchy_retry_index' not in st.session_state:
+    st.session_state.hierarchy_retry_index = 0
 if 'rerun_count' not in st.session_state:
     st.session_state.rerun_count = 0
 
@@ -137,6 +141,8 @@ def clear_processing_state():
     st.session_state.hierarchy_batch_index = 0
     st.session_state.population_batch_index = 0
     st.session_state._commit_done = set()
+    st.session_state.hierarchy_failed_batches = []
+    st.session_state.hierarchy_retry_index = 0
     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
         try:
             st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] Deleting temp KMZ file: {st.session_state.tmp_kmz_path}")
@@ -199,6 +205,8 @@ if uploaded_file is not None:
             st.session_state.diagnostic_run_id = 0
             st.session_state._logged_ai = False
             st.session_state._commit_done = set()
+            st.session_state.hierarchy_failed_batches = []
+            st.session_state.hierarchy_retry_index = 0
             st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] Session state reset complete")
 
             # Create temporary file for KMZ
@@ -446,6 +454,9 @@ if uploaded_file is not None:
                 idx = st.session_state.hierarchy_batch_index
                 n = len(locations) if locations else 0
                 total_batches = (1 + max(0, (n - first_batch_size + batch_size - 1) // batch_size)) if n else 0
+            elif stage == "hierarchy_retry":
+                idx = st.session_state.hierarchy_retry_index
+                total_batches = len(st.session_state.hierarchy_failed_batches)
             elif stage == "population":
                 idx = st.session_state.population_batch_index
                 total_batches = (len(locations) + chunk_size - 1) // chunk_size if locations else 0
@@ -513,13 +524,17 @@ if uploaded_file is not None:
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: calling fetch_admin_hierarchy_batch timeout={hierarchy_timeout}s retries={hierarchy_retries} ...")
                         analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
                         analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
-                        analyzer.fetch_admin_hierarchy_batch(
-                            batch,
-                            timeout_sec=hierarchy_timeout,
-                            max_retry_attempts=hierarchy_retries,
-                        )
-                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: fetch_admin_hierarchy_batch returned ok")
-                        analyzer._log(f"CALL_END Overpass hierarchy batch {idx + 1}/{total_batches}")
+                        try:
+                            analyzer.fetch_admin_hierarchy_batch(
+                                batch,
+                                timeout_sec=hierarchy_timeout,
+                                max_retry_attempts=hierarchy_retries,
+                            )
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: Batch {idx + 1} SUCCESS")
+                            analyzer._log(f"CALL_END Overpass hierarchy batch {idx + 1}/{total_batches}")
+                        except Exception as e:
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: Batch {idx + 1} FAILED - will retry later")
+                            st.session_state.hierarchy_failed_batches.append((idx, batch))
                         estimated_time = analyzer._estimate_processing_time(len(locations), idx + 1, 0)
                         analyzer._log(f"Estimated remaining time: {estimated_time}")
                         time.sleep(config.HIERARCHY_BATCH_DELAY)
@@ -530,24 +545,75 @@ if uploaded_file is not None:
                         processed_after_this_batch = first_batch_size + idx * batch_size
                     if processed_after_this_batch >= len(locations):
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: ALL BATCHES COMPLETE! processed_after_this_batch={processed_after_this_batch}, total_locations={len(locations)}")
-                        analyzer._log("Finished retrieving administrative boundaries.")
-                        analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
-                        max_loc = config.DEFAULT_MAX_LOCATIONS
-                        if max_loc > 0 and len(locations) > max_loc:
-                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: Limiting locations from {len(locations)} to {max_loc}")
-                            analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
-                            st.session_state.processing_locations = locations[:max_loc]
-                            locations = st.session_state.processing_locations
-                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: TRANSITIONING TO POPULATION STAGE")
-                        analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
-                        analyzer._log("\n--- Starting Population Estimation (GPT) ---")
-                        st.session_state.processing_stage = "population"
-                        st.session_state.population_batch_index = 0
+                        analyzer._log("Finished initial hierarchy pass.")
+                        if st.session_state.hierarchy_failed_batches:
+                            num_failed = len(st.session_state.hierarchy_failed_batches)
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: {num_failed} batches failed - transitioning to RETRY stage")
+                            analyzer._log(f"CHECKPOINT: Stage 3.5 - Retrying {num_failed} failed hierarchy batches")
+                            st.session_state.processing_stage = "hierarchy_retry"
+                            st.session_state.hierarchy_retry_index = 0
+                        else:
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: No failures - transitioning to POPULATION")
+                            analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
+                            max_loc = config.DEFAULT_MAX_LOCATIONS
+                            if max_loc > 0 and len(locations) > max_loc:
+                                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: Limiting locations from {len(locations)} to {max_loc}")
+                                analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
+                                st.session_state.processing_locations = locations[:max_loc]
+                                locations = st.session_state.processing_locations
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: TRANSITIONING TO POPULATION STAGE")
+                            analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
+                            analyzer._log("\n--- Starting Population Estimation (GPT) ---")
+                            st.session_state.processing_stage = "population"
+                            st.session_state.population_batch_index = 0
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: State updated. NEW stage={st.session_state.processing_stage}, population_idx={st.session_state.population_batch_index}")
                     progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: saving state and st.rerun()")
                     st.session_state.progress_messages = progress_messages
                     st.session_state.status_messages = status_messages
                     progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: State saved. About to call st.rerun()")
+                    st.rerun()
+
+                elif st.session_state.processing_stage == "hierarchy_retry":
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: ENTERED retry stage")
+                    retry_idx = st.session_state.hierarchy_retry_index
+                    failed_batches = st.session_state.hierarchy_failed_batches
+                    total_retries = len(failed_batches)
+                    if retry_idx < total_retries:
+                        original_batch_idx, batch = failed_batches[retry_idx]
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: Retrying batch {original_batch_idx + 1} (retry {retry_idx + 1}/{total_retries})")
+                        analyzer._log(f"Retrying failed hierarchy batch {original_batch_idx + 1}/{total_retries} ({len(batch)} locations)...")
+                        full_timeout = config.OSM_API_TIMEOUT
+                        full_retries = config.MAX_RETRY_ATTEMPTS
+                        try:
+                            analyzer.fetch_admin_hierarchy_batch(
+                                batch,
+                                timeout_sec=full_timeout,
+                                max_retry_attempts=full_retries,
+                            )
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: Retry SUCCESS for batch {original_batch_idx + 1}")
+                            analyzer._log(f"Successfully retrieved hierarchy data on retry for batch {original_batch_idx + 1}")
+                        except Exception as e:
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: Retry FAILED for batch {original_batch_idx + 1} after {full_retries} attempts")
+                            analyzer._log(f"Warning: Could not retrieve hierarchy for batch {original_batch_idx + 1} even after retries: {str(e)}")
+                        st.session_state.hierarchy_retry_index = retry_idx + 1
+                        time.sleep(config.HIERARCHY_BATCH_DELAY)
+                    else:
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: ALL RETRIES COMPLETE")
+                        analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed (including retries)")
+                        st.session_state.hierarchy_failed_batches = []
+                        max_loc = config.DEFAULT_MAX_LOCATIONS
+                        if max_loc > 0 and len(locations) > max_loc:
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: Limiting locations from {len(locations)} to {max_loc}")
+                            analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
+                            st.session_state.processing_locations = locations[:max_loc]
+                            locations = st.session_state.processing_locations
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: TRANSITIONING TO POPULATION STAGE")
+                        analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
+                        analyzer._log("\n--- Starting Population Estimation (GPT) ---")
+                        st.session_state.processing_stage = "population"
+                        st.session_state.population_batch_index = 0
+                    st.session_state.progress_messages = progress_messages
+                    st.session_state.status_messages = status_messages
                     st.rerun()
 
                 elif st.session_state.processing_stage == "population":
@@ -1052,6 +1118,10 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
                 flow_stages.append("🔵 Button clicked")
             elif "[INIT] KMZ+OSM success" in msg:
                 flow_stages.append("✅ KMZ+OSM completed")
+            elif "hierarchy_retry: ALL RETRIES COMPLETE" in msg:
+                flow_stages.append("✅ Hierarchy retries completed")
+            elif "hierarchy_retry: ENTERED retry stage" in msg:
+                flow_stages.append("🔄 Hierarchy retry stage entered")
             elif "TRANSITIONING TO POPULATION" in msg:
                 flow_stages.append("🔄 Hierarchy → Population transition")
             elif "[SM] population: ENTERED population stage" in msg:

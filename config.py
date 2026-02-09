@@ -27,10 +27,10 @@ class Config:
         return self.PRIMARY_PLACE_TYPES + self.ADDITIONAL_PLACE_TYPES + self.SPECIAL_PLACE_TYPES
     
     # API Settings
-    # Overpass API base URL. Set OVERPASS_URL or OSM_OVERPASS_URL to an alternative (e.g. https://overpass.private.coffee/api/interpreter) to reduce 504 Gateway Timeout errors.
+    # Overpass API. Default uses kumi.systems (fewer 504s than overpass-api.de). Override with OVERPASS_URL or OSM_OVERPASS_URL.
     OSM_OVERPASS_URL: str = os.getenv(
         'OVERPASS_URL',
-        os.getenv('OSM_OVERPASS_URL', 'http://overpass-api.de/api/interpreter')
+        os.getenv('OSM_OVERPASS_URL', 'https://overpass.kumi.systems/api/interpreter')
     )
     OSM_API_TIMEOUT: int = int(os.getenv('OSM_API_TIMEOUT', '60'))
     OSM_API_TIMEOUT_BUFFER: int = 10  # Additional seconds for timeout buffer
@@ -46,7 +46,7 @@ class Config:
     HIERARCHY_FIRST_BATCH_SIZE: int = 1   # First hierarchy batch size (minimal so first work run completes within timeout)
     HIERARCHY_QUERY_TIMEOUT: int = 10   # Short so work run finishes before gateway timeout; 504s common on overpass-api.de
     HIERARCHY_TIMEOUT_BUFFER: int = 2   # Added to timeout for hierarchy request only (keeps run under ~12s per batch)
-    HIERARCHY_MAX_RETRIES_CHUNKED: int = 0   # No retry so run completes quickly with error if Overpass 504s
+    HIERARCHY_MAX_RETRIES_CHUNKED: int = 1   # 1 attempt (no retries) so run completes quickly if Overpass 504s
     DEFAULT_MAX_LOCATIONS: int = int(os.getenv('DEFAULT_MAX_LOCATIONS', '0'))  # 0 = no limit
     DEFAULT_PAUSE_BEFORE_GPT: bool = False
     DEFAULT_ENABLE_WEB_BROWSING: bool = os.getenv('ENABLE_WEB_BROWSING', 'True').lower() == 'true'

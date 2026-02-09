@@ -98,6 +98,21 @@ if 'diagnostic_run_id' not in st.session_state:
     st.session_state.diagnostic_run_id = 0
 if '_commit_done' not in st.session_state:
     st.session_state._commit_done = set()  # (stage, idx) for which we did the quick commit run
+if 'rerun_count' not in st.session_state:
+    st.session_state.rerun_count = 0
+
+# Log every rerun at the top level
+st.session_state.rerun_count += 1
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] ========================================")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START] RERUN #{st.session_state.rerun_count}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START] Session state snapshot:")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   processing={st.session_state.processing}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   processing_stage={st.session_state.processing_stage}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   hierarchy_batch_index={st.session_state.hierarchy_batch_index}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   population_batch_index={st.session_state.population_batch_index}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   locations_count={len(st.session_state.processing_locations) if st.session_state.processing_locations else 0}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   results={'exists' if st.session_state.results else 'None'}")
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] ========================================")
 
 # Helper function to save processing state
 def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
@@ -113,6 +128,8 @@ def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, popula
 # Helper function to clear processing state
 def clear_processing_state():
     """Clear all processing state. Does not clear results or excel_data."""
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] clear_processing_state() called")
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] Before clear: processing={st.session_state.processing}, stage={st.session_state.processing_stage}")
     st.session_state.processing = False
     st.session_state.processing_stage = None
     st.session_state.processing_locations = None
@@ -122,10 +139,14 @@ def clear_processing_state():
     st.session_state._commit_done = set()
     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
         try:
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] Deleting temp KMZ file: {st.session_state.tmp_kmz_path}")
             os.unlink(st.session_state.tmp_kmz_path)
-        except Exception:
+        except Exception as e:
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] Failed to delete temp file: {str(e)}")
             pass
     st.session_state.tmp_kmz_path = None
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] After clear: processing={st.session_state.processing}, stage={st.session_state.processing_stage}")
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CLEAR] clear_processing_state() completed")
 
 
 def create_analyzer_from_state(progress_callback, status_callback, skip_ai_status_log: bool = False):
@@ -151,14 +172,22 @@ def create_analyzer_from_state(progress_callback, status_callback, skip_ai_statu
     )
 
 # Process button
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] Checking if file uploaded: {uploaded_file is not None}")
 if uploaded_file is not None:
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] File uploaded: {uploaded_file.name}, size={uploaded_file.size} bytes")
     # Validate file size
     try:
         validate_file_size(uploaded_file.size)
+        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] File size validation passed")
     except ValidationError as e:
+        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] ERROR: File size validation failed: {str(e)}")
         st.error(f"❌ {str(e)}")
     else:
+        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] Checking button state: processing={st.session_state.processing}")
         if st.button("🚀 Start Analysis", type="primary", disabled=st.session_state.processing):
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] ========================================")
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] START ANALYSIS BUTTON CLICKED!")
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] ========================================")
             st.session_state.processing = True
             st.session_state.results = None
             st.session_state.excel_data = None
@@ -170,18 +199,24 @@ if uploaded_file is not None:
             st.session_state.diagnostic_run_id = 0
             st.session_state._logged_ai = False
             st.session_state._commit_done = set()
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] Session state reset complete")
 
             # Create temporary file for KMZ
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] Creating temporary KMZ file...")
             with tempfile.NamedTemporaryFile(delete=False, suffix='.kmz') as tmp_file:
                 tmp_file.write(uploaded_file.read())
                 tmp_kmz_path = tmp_file.name
             st.session_state.tmp_kmz_path = tmp_kmz_path
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] Temporary KMZ file created: {tmp_kmz_path}")
             
             # Validate KMZ file
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] Validating KMZ file structure...")
             kmz_valid = True
             try:
                 validate_kmz_file(tmp_kmz_path)
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] KMZ file validation passed")
             except (ValidationError, KMZParseError) as e:
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] ERROR: KMZ validation failed: {str(e)}")
                 st.error(f"❌ Invalid KMZ file: {str(e)}")
                 st.session_state.processing = False
                 if os.path.exists(tmp_kmz_path):
@@ -190,22 +225,28 @@ if uploaded_file is not None:
             
             if kmz_valid:
                 try:
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] KMZ validation passed, starting API key validation")
                     # Always use both providers
                     provider_value = "both"
                     api_keys_valid = True
                     
                     # Get OpenAI API key
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Checking OpenAI API key...")
                     openai_api_key = st.secrets.get("OPENAI_API_KEY", "")
                     if not openai_api_key:
+                        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] ERROR: OpenAI API key not found")
                         st.error("⚠️ OpenAI API key not found in secrets. Please add OPENAI_API_KEY to your Streamlit secrets.")
                         st.session_state.processing = False
                         if os.path.exists(tmp_kmz_path):
                             os.unlink(tmp_kmz_path)
                         api_keys_valid = False
                     else:
+                        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] OpenAI API key found, validating...")
                         try:
                             validate_api_key(openai_api_key)
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] OpenAI API key validated successfully")
                         except ValidationError as e:
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] ERROR: OpenAI API key validation failed: {str(e)}")
                             st.error(f"⚠️ {str(e)}")
                             st.session_state.processing = False
                             if os.path.exists(tmp_kmz_path):
@@ -214,15 +255,20 @@ if uploaded_file is not None:
                     
                     # Get Gemini API key
                     if api_keys_valid:
+                        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Checking Gemini API key...")
                         gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
                         if not gemini_api_key:
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] ERROR: Gemini API key not found")
                             st.error("⚠️ Gemini API key not found in secrets. Please add GEMINI_API_KEY to your Streamlit secrets.")
                             st.session_state.processing = False
                             if os.path.exists(tmp_kmz_path):
                                 os.unlink(tmp_kmz_path)
                             api_keys_valid = False
+                        else:
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Gemini API key found")
                     
                     # Check if at least one API key is available
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Checking if at least one API key available... api_keys_valid={api_keys_valid}, openai={bool(openai_api_key)}, gemini={bool(gemini_api_key)}")
                     if api_keys_valid and not openai_api_key and not gemini_api_key:
                         st.error("⚠️ No API keys found. Please configure at least one API key in Streamlit secrets.")
                         st.session_state.processing = False
@@ -231,7 +277,9 @@ if uploaded_file is not None:
                         api_keys_valid = False
                     
                     # If we have valid keys, run initial KMZ+OSM (chunked state machine starts after this)
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] API keys validated, starting initial KMZ+OSM processing")
                     if api_keys_valid and (openai_api_key or gemini_api_key):
+                        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Creating progress UI containers...")
                         progress_container = st.container()
                         with progress_container:
                             stage_text = st.empty()
@@ -261,6 +309,7 @@ if uploaded_file is not None:
                             st.session_state.progress_messages = progress_messages.copy()
 
                         try:
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Creating LocationAnalyzer instance...")
                             analyzer = LocationAnalyzer(
                                 kmz_file=tmp_kmz_path,
                                 verbose=config.VERBOSE,
@@ -278,17 +327,22 @@ if uploaded_file is not None:
                                 progress_callback=progress_callback_with_save,
                                 status_callback=status_callback,
                             )
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] LocationAnalyzer created, calling run_kmz_and_osm_only()...")
                             polygon_points, locations = analyzer.run_kmz_and_osm_only()
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] run_kmz_and_osm_only() returned: polygon_points={polygon_points is not None}, locations={locations is not None}, locations_count={len(locations) if locations else 0}")
                             if locations is None:
+                                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] ERROR: locations is None, KMZ/OSM failed")
                                 st.error("❌ KMZ parsing or OSM lookup failed. Check the log below.")
                                 st.session_state.progress_messages = progress_messages
                                 st.session_state.status_messages = status_messages
                                 clear_processing_state()
                             else:
+                                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] KMZ+OSM success! Found {len(locations)} locations")
                                 estimated_time = analyzer._estimate_processing_time(len(locations), 0, 0)
                                 analyzer._log(f"Estimated remaining time: {estimated_time}")
                                 analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries started")
                                 analyzer._log("\n--- Retrieving Administrative Boundaries ---")
+                                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Saving state to session_state...")
                                 st.session_state.polygon_points = polygon_points
                                 st.session_state.processing_locations = locations
                                 st.session_state.processing_stage = "hierarchy"
@@ -300,20 +354,36 @@ if uploaded_file is not None:
                                 }
                                 st.session_state.progress_messages = progress_messages
                                 st.session_state.status_messages = status_messages
+                                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] State saved. Session state snapshot: processing={st.session_state.processing}, stage={st.session_state.processing_stage}, hierarchy_idx={st.session_state.hierarchy_batch_index}, locations_count={len(st.session_state.processing_locations)}")
+                                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] Calling st.rerun() to enter state machine...")
                                 st.rerun()
                         except Exception as e:
                             import traceback as tb
+                            full_tb = tb.format_exc()
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] ========== EXCEPTION IN INITIAL PROCESSING ==========")
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] EXCEPTION type={type(e).__name__}")
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] EXCEPTION message={str(e)}")
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] EXCEPTION traceback:")
+                            st.session_state.progress_messages.append(full_tb)
+                            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [INIT] ========== END EXCEPTION ==========")
                             st.error(f"❌ Error during analysis: {str(e)}")
                             st.session_state.progress_messages = progress_messages
                             st.session_state.status_messages = status_messages
                             with st.expander("Error Details"):
-                                st.code(tb.format_exc())
+                                st.code(full_tb)
                             clear_processing_state()
                 except Exception as e:
                     import traceback as tb
+                    full_tb = tb.format_exc()
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] ========== OUTER EXCEPTION ==========")
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] EXCEPTION type={type(e).__name__}")
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] EXCEPTION message={str(e)}")
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] EXCEPTION traceback:")
+                    st.session_state.progress_messages.append(full_tb)
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] ========== END EXCEPTION ==========")
                     st.error(f"❌ Error: {str(e)}")
                     with st.expander("Error Details"):
-                        st.code(tb.format_exc())
+                        st.code(full_tb)
                     st.session_state.processing = False
                     if st.session_state.tmp_kmz_path and os.path.exists(st.session_state.tmp_kmz_path):
                         try:
@@ -323,7 +393,11 @@ if uploaded_file is not None:
                     st.session_state.tmp_kmz_path = None
 
             # State machine: run one chunk per rerun when processing is active
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] ========== RERUN CHECKPOINT ==========")
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] State machine entry check: processing={st.session_state.processing}, processing_stage={st.session_state.processing_stage}")
             if st.session_state.processing and st.session_state.processing_stage is not None:
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [SM-ENTER] ✓ CONDITION MET - Entering state machine")
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [SM-ENTER] Current state: Stage={st.session_state.processing_stage}, hierarchy_idx={st.session_state.hierarchy_batch_index}, population_idx={st.session_state.population_batch_index}, locations_count={len(st.session_state.processing_locations) if st.session_state.processing_locations else 0}")
                 progress_container = st.container()
                 with progress_container:
                     stage_text = st.empty()
@@ -353,7 +427,9 @@ if uploaded_file is not None:
                     st.session_state.progress_messages = progress_messages.copy()
 
                 if st.button("Cancel", key="cancel_processing"):
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CANCEL] Cancel button clicked - clearing processing state")
                     clear_processing_state()
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CANCEL] Processing state cleared - calling st.rerun()")
                     st.rerun()
 
                 st.session_state.diagnostic_run_id = st.session_state.diagnostic_run_id + 1
@@ -452,71 +528,114 @@ if uploaded_file is not None:
                         else:
                             processed_after_this_batch = first_batch_size + idx * batch_size
                         if processed_after_this_batch >= len(locations):
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: ALL BATCHES COMPLETE! processed_after_this_batch={processed_after_this_batch}, total_locations={len(locations)}")
                             analyzer._log("Finished retrieving administrative boundaries.")
                             analyzer._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
                             max_loc = config.DEFAULT_MAX_LOCATIONS
                             if max_loc > 0 and len(locations) > max_loc:
+                                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: Limiting locations from {len(locations)} to {max_loc}")
                                 analyzer._log(f"Limiting results to {max_loc} locations (out of {len(locations)} found)")
                                 st.session_state.processing_locations = locations[:max_loc]
                                 locations = st.session_state.processing_locations
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: TRANSITIONING TO POPULATION STAGE")
                             analyzer._log("CHECKPOINT: Stage 4 - Population estimation started")
                             analyzer._log("\n--- Starting Population Estimation (GPT) ---")
                             st.session_state.processing_stage = "population"
                             st.session_state.population_batch_index = 0
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: State updated. NEW stage={st.session_state.processing_stage}, population_idx={st.session_state.population_batch_index}")
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: saving state and st.rerun()")
                         st.session_state.progress_messages = progress_messages
                         st.session_state.status_messages = status_messages
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: State saved. About to call st.rerun()")
                         st.rerun()
 
                     elif st.session_state.processing_stage == "population":
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: ENTERED population stage")
                         idx = st.session_state.population_batch_index
                         num_batches = (len(locations) + chunk_size - 1) // chunk_size
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Processing batch {idx + 1}/{num_batches}, locations={len(locations)}, chunk_size={chunk_size}")
                         analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
                         analyzer._log(f"CALL_START Population batch {idx + 1}/{num_batches}")
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Calling estimate_populations_single_batch(locations, {idx})...")
                         analyzer.estimate_populations_single_batch(locations, idx)
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: estimate_populations_single_batch() completed")
                         analyzer._log(f"CALL_END Population batch {idx + 1}/{num_batches}")
                         if idx < num_batches - 1:
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Sleeping for {config.GPT_BATCH_DELAY}s before next batch...")
                             time.sleep(config.GPT_BATCH_DELAY)
                         st.session_state.population_batch_index = idx + 1
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Updated population_batch_index to {st.session_state.population_batch_index}")
                         if (idx + 1) * chunk_size >= len(locations):
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: ALL POPULATION BATCHES COMPLETE! Transitioning to excel stage")
                             analyzer._log("CHECKPOINT: Stage 4 - Population estimation completed")
                             analyzer.calculate_combined_populations(locations)
                             st.session_state.processing_stage = "excel"
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Stage updated to '{st.session_state.processing_stage}'")
                         st.session_state.progress_messages = progress_messages
                         st.session_state.status_messages = status_messages
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: State saved, calling st.rerun()")
                         st.rerun()
 
                     elif st.session_state.processing_stage == "excel":
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: ENTERED excel stage")
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Calling save_to_excel({len(locations)} locations)...")
                         excel_data = analyzer.save_to_excel(locations)
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: save_to_excel() completed. excel_data={'SUCCESS' if excel_data else 'FAILED'}")
                         st.session_state.results = locations
                         st.session_state.excel_data = excel_data
                         st.session_state.progress_messages = progress_messages
                         st.session_state.status_messages = status_messages
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Marking progress as complete and clearing state...")
                         progress_ui.mark_complete()
                         clear_processing_state()
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Processing state cleared. processing={st.session_state.processing}, processing_stage={st.session_state.processing_stage}")
                         if excel_data:
                             st.success(f"✅ Successfully processed {len(locations)} locations!")
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: SUCCESS - Displaying success message")
                         else:
                             st.warning("⚠️ Excel export failed, but results are available below.")
+                            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: WARNING - Excel export failed")
+                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Calling st.rerun() to display results...")
                         st.rerun()
 
                 except Exception as e:
                     import traceback as tb
                     err_msg = str(e)
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION type={type(e).__name__} msg={err_msg[:200]}")
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] ========== EXCEPTION CAUGHT ==========")
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION type={type(e).__name__}")
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION message={err_msg[:500]}")
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION Current stage={st.session_state.processing_stage}, hierarchy_idx={st.session_state.hierarchy_batch_index}, population_idx={st.session_state.population_batch_index}")
                     progress_cb(f"[ERROR] {err_msg}")
-                    progress_cb(tb.format_exc())
+                    full_traceback = tb.format_exc()
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION Full traceback:")
+                    progress_cb(full_traceback)
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] ========== END EXCEPTION ==========")
                     st.session_state.progress_messages = progress_messages.copy()
                     st.session_state.status_messages = status_messages.copy()
                     st.error(f"Error during processing: {err_msg}")
                     if "504" in err_msg or "Gateway Timeout" in err_msg or "overpass" in err_msg.lower():
                         st.info("Overpass often returns 504 when busy. Set env `OVERPASS_URL` or `OSM_OVERPASS_URL` to another public Overpass instance and restart the app.")
                     with st.expander("Error details"):
-                        st.code(tb.format_exc())
+                        st.code(full_traceback)
+                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] EXCEPTION: Calling st.rerun() after error...")
                     st.rerun()
+            else:
+                # State machine NOT entered - log why
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] ✗ STATE MACHINE NOT ENTERED")
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] Reason analysis:")
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK]   - processing={st.session_state.processing} (expected: True)")
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK]   - processing_stage={st.session_state.processing_stage} (expected: not None)")
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK]   - processing_locations={'exists' if st.session_state.processing_locations else 'None'}")
+                st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK]   - processing_config={'exists' if st.session_state.processing_config else 'None'}")
+                if not st.session_state.processing:
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] ⚠️ CRITICAL: processing flag is False - processing was stopped or never started")
+                if st.session_state.processing_stage is None:
+                    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] ⚠️ CRITICAL: processing_stage is None - stage was not set or was cleared")
 
 # Display results
+st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [DISPLAY] Checking if results should be displayed: results={'exists' if st.session_state.results is not None else 'None'}")
 if st.session_state.results is not None:
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [DISPLAY] ✓ Displaying results for {len(st.session_state.results)} locations")
     st.divider()
     st.header("📊 Results")
     
@@ -889,6 +1008,9 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
         last_diagnostic = None
         last_position = None
         last_sm = None
+        last_check = None
+        last_button = None
+        last_init = None
         for msg in reversed(all_messages):
             if "DIAGNOSTIC:" in msg and last_diagnostic is None:
                 last_diagnostic = msg
@@ -896,16 +1018,57 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
                 last_position = msg
             if "[SM]" in msg and last_sm is None:
                 last_sm = msg
+            if "[CHECK]" in msg and last_check is None:
+                last_check = msg
+            if "[BUTTON]" in msg and last_button is None:
+                last_button = msg
+            if "[INIT]" in msg and last_init is None:
+                last_init = msg
+        
         if last_diagnostic:
             st.warning(f"**Last exception:** {last_diagnostic}")
         else:
             st.text("Last exception: none")
+        
         if last_position:
-            st.info(f"**Last position:** {last_position}")
+            st.info(f"**Last position (workflow):** {last_position}")
         elif last_sm:
             st.info(f"**Last position (state machine):** {last_sm}")
+        elif last_check:
+            st.info(f"**Last position (check):** {last_check}")
+        elif last_init:
+            st.info(f"**Last position (init):** {last_init}")
+        elif last_button:
+            st.info(f"**Last position (button):** {last_button}")
         else:
-            st.text("Last position: (no RUN/CALL_START/CALL_END or [SM] seen)")
+            st.text("Last position: (no position markers found)")
+        
+        # Execution flow summary
+        st.markdown("#### Execution Flow Summary")
+        flow_stages = []
+        for msg in all_messages:
+            if "BUTTON CLICKED" in msg:
+                flow_stages.append("🔵 Button clicked")
+            elif "[INIT] KMZ+OSM success" in msg:
+                flow_stages.append("✅ KMZ+OSM completed")
+            elif "TRANSITIONING TO POPULATION" in msg:
+                flow_stages.append("🔄 Hierarchy → Population transition")
+            elif "[SM] population: ENTERED population stage" in msg:
+                flow_stages.append("✅ Population stage entered")
+            elif "ALL POPULATION BATCHES COMPLETE" in msg:
+                flow_stages.append("✅ Population batches completed")
+            elif "Transitioning to excel stage" in msg:
+                flow_stages.append("🔄 Population → Excel transition")
+            elif "[SM] excel: ENTERED excel stage" in msg:
+                flow_stages.append("✅ Excel stage entered")
+            elif "STATE MACHINE NOT ENTERED" in msg:
+                flow_stages.append("❌ State machine NOT entered (critical issue)")
+        
+        if flow_stages:
+            for stage in flow_stages:
+                st.text(stage)
+        else:
+            st.text("No major flow stages detected yet")
         
         # Show error summary if there are errors
         if errors:

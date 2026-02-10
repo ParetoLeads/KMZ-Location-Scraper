@@ -2,6 +2,7 @@
 Retry handler utilities for API calls with exponential backoff.
 """
 import time
+import json
 import requests
 from typing import Callable, TypeVar, Optional, Any
 from functools import wraps
@@ -278,7 +279,8 @@ def execute_with_retry(
                     log_callback(error_msg)
                 raise OSMQueryError(error_msg) from last_exception
                 
-        except requests.exceptions.RequestException as e:
+        except (requests.exceptions.RequestException, ValueError, json.JSONDecodeError) as e:
+            # ValueError catches empty/invalid JSON responses, JSONDecodeError catches JSON parsing errors
             last_exception = e
             wait_time = base_delay  # Constant delay, not incremental
             _log_diagnostic(e, log_callback)

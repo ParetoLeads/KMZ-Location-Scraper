@@ -306,6 +306,7 @@ if uploaded_file is not None:
 
                         def progress_callback_with_save(msg: str) -> None:
                             progress_messages.append(msg)
+                            # CRITICAL: Save to session state immediately so messages persist across reruns/timeouts
                             st.session_state.progress_messages = progress_messages.copy()
                             progress_tracker.update_from_message(msg)
                             progress_ui.update(progress_tracker, msg)
@@ -425,6 +426,7 @@ if uploaded_file is not None:
 
             def progress_cb(msg: str) -> None:
                 progress_messages.append(msg)
+                # CRITICAL: Save to session state immediately so messages persist across reruns/timeouts
                 st.session_state.progress_messages = progress_messages.copy()
                 progress_tracker.update_from_message(msg)
                 progress_ui.update(progress_tracker, msg)

@@ -91,24 +91,33 @@ class LocationAnalyzer:
         # Store polygon points for map visualization
         self.polygon_points: Optional[List[Tuple[float, float]]] = None
         
-        # Initialize AI clients
+        # AI clients: lazy-initialized on first use (so hierarchy runs don't block on OpenAI/Gemini init)
         self.gpt_client: Optional[OpenAI] = None
         self.gemini_model = None
         self.use_openai = False
         self.use_gemini_flag = False
+        self.gpt_model: str = config.GPT_MODEL
+        self._skip_ai_status_log = skip_ai_status_log
+        self._ai_clients_initialized = False
         
-        # Initialize OpenAI client
+        # Check if KMZ file exists
+        if not os.path.exists(kmz_file):
+            raise FileNotFoundError(f"KMZ file not found: {kmz_file}")
+    
+    def _ensure_ai_clients(self) -> None:
+        """Lazy-init OpenAI and Gemini clients on first use (keeps hierarchy runs fast)."""
+        if self._ai_clients_initialized:
+            return
+        self._ai_clients_initialized = True
+        skip_log = getattr(self, '_skip_ai_status_log', False)
         if self.ai_provider in ["openai", "both"] and self.use_gpt and self.openai_api_key:
             try:
                 self.gpt_client = OpenAI(api_key=self.openai_api_key)
-                self.gpt_model: str = config.GPT_MODEL
                 self.use_openai = True
-                if not skip_ai_status_log:
+                if not skip_log:
                     self.status_callback(f"OpenAI GPT enabled using model: {self.gpt_model}")
             except Exception as e:
                 self.status_callback(f"Warning: Failed to initialize OpenAI client: {str(e)}")
-        
-        # Initialize Gemini client
         if self.ai_provider in ["gemini", "both"] and self.use_gpt and self.gemini_api_key:
             if not GEMINI_AVAILABLE:
                 self.status_callback("Warning: google-generativeai package not installed. Install with: pip install google-generativeai")
@@ -117,22 +126,16 @@ class LocationAnalyzer:
                     genai.configure(api_key=self.gemini_api_key)
                     self.gemini_model = genai.GenerativeModel(config.GEMINI_MODEL)
                     self.use_gemini_flag = True
-                    if not skip_ai_status_log:
+                    if not skip_log:
                         self.status_callback(f"Google Gemini enabled using model: {config.GEMINI_MODEL}")
                 except Exception as e:
                     error_traceback = traceback.format_exc()
                     error_msg = f"Warning: Failed to initialize Gemini client: {str(e)}\n{error_traceback}"
                     self.status_callback(error_msg)
                     self._log(error_msg)
-        
-        # Warn if no AI provider is available
         if self.use_gpt and not self.use_openai and not self.use_gemini_flag:
             self.status_callback("Warning: AI population estimation enabled but no valid API keys found. Skipping AI estimation.")
             self.use_gpt = False
-        
-        # Check if KMZ file exists
-        if not os.path.exists(kmz_file):
-            raise FileNotFoundError(f"KMZ file not found: {kmz_file}")
     
     def _log(self, message: str):
         """Log a message using callbacks with timestamp."""
@@ -511,11 +514,18 @@ class LocationAnalyzer:
                 timeout=config.OSM_API_TIMEOUT + config.OSM_API_TIMEOUT_BUFFER
             )
             response.raise_for_status()
-            return response.json()
+            # Check if response is empty or invalid before parsing JSON
+            if not response.text or not response.text.strip():
+                raise ValueError(f"Empty response from Overpass API (status {response.status_code})")
+            try:
+                return response.json()
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON response from Overpass API: {str(e)}. Response preview: {response.text[:200]}")
         
         try:
             data = execute_with_retry(
                 _execute_query,
+                max_attempts=config.OSM_DISCOVERY_MAX_RETRIES,  # Use fewer retries for discovery queries
                 log_callback=lambda msg: self._log(f"{query_type} query: {msg}")
             )
             result = self._process_osm_results(data, place_types, skip_city_block)
@@ -1019,6 +1029,7 @@ class LocationAnalyzer:
     
     def estimate_populations(self, locations: List[Dict]) -> List[Dict]:
         """Get population estimates from GPT only."""
+        self._ensure_ai_clients()
         self._log(f"\n--- Starting Population Estimation Phase for {len(locations)} locations ---")
         
         # Initialize AI population fields for all providers
@@ -1208,6 +1219,7 @@ class LocationAnalyzer:
     ) -> None:
         """Process one batch of population estimation (GPT/Gemini). Updates locations in place.
         Used by chunked/rerun processing. Does not compute combined population; call calculate_combined_populations after all batches."""
+        self._ensure_ai_clients()
         chunk = chunk_size if chunk_size is not None else self.chunk_size
         start_index = batch_index * chunk
         end_index = min(start_index + chunk, len(locations))

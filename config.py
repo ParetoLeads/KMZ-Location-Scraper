@@ -37,7 +37,8 @@ class Config:
     
     # Retry Settings
     MAX_RETRY_ATTEMPTS: int = int(os.getenv('MAX_RETRY_ATTEMPTS', '12'))
-    RETRY_DELAY_BASE: int = 5  # Base delay in seconds (increments by attempt number)
+    OSM_DISCOVERY_MAX_RETRIES: int = int(os.getenv('OSM_DISCOVERY_MAX_RETRIES', '3'))  # Fewer retries for OSM discovery (faster failure)
+    RETRY_DELAY_BASE: int = 5  # Base delay in seconds (constant, not incremental)
     DEFAULT_MAX_RETRIES: int = 3  # Legacy default (kept for compatibility)
     
     # Processing Settings

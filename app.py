@@ -584,8 +584,8 @@ if uploaded_file is not None:
                         original_batch_idx, batch = failed_batches[retry_idx]
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy_retry: Retrying batch {original_batch_idx + 1} (retry {retry_idx + 1}/{total_retries})")
                         analyzer._log(f"Retrying failed hierarchy batch {original_batch_idx + 1}/{total_retries} ({len(batch)} locations)...")
-                        full_timeout = 25
-                        full_retries = 3
+                        full_timeout = 40
+                        full_retries = 4
                         try:
                             analyzer.fetch_admin_hierarchy_batch(
                                 batch,

@@ -507,16 +507,21 @@ class LocationAnalyzer:
             return cached_result
         
         # Execute query with retry logic
+        OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0"}
+        DISCOVERY_TIMEOUT = 35  # Fail fast to free slots; avoid 70s hold
+
         def _execute_query() -> Dict[str, Any]:
             response = requests.post(
                 self.overpass_url,
                 data=query,
-                timeout=config.OSM_API_TIMEOUT + config.OSM_API_TIMEOUT_BUFFER
+                timeout=DISCOVERY_TIMEOUT,
+                headers=OSM_HEADERS,
             )
             response.raise_for_status()
-            # Check if response is empty or invalid before parsing JSON
-            if not response.text or not response.text.strip():
-                raise ValueError(f"Empty response from Overpass API (status {response.status_code})")
+            # Check if response is empty or too short before parsing JSON
+            txt = response.text.strip() if response.text else ""
+            if not txt or len(txt) < 10:
+                raise ValueError(f"Empty or too short response from Overpass API (status {response.status_code}, length={len(txt)})")
             try:
                 return response.json()
             except json.JSONDecodeError as e:
@@ -635,16 +640,22 @@ class LocationAnalyzer:
         else:
             buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
 
+        OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0"}
+
         def _execute_hierarchy_query() -> Dict[str, Any]:
             """Execute the hierarchy query."""
             self._log(f"[Overpass] POST start url={self.overpass_url} timeout={timeout + buffer}s")
             response = requests.post(
                 self.overpass_url,
                 data=query,
-                timeout=timeout + buffer
+                timeout=timeout + buffer,
+                headers=OSM_HEADERS,
             )
             self._log(f"[Overpass] POST done status={response.status_code}")
             response.raise_for_status()
+            txt = response.text.strip() if response.text else ""
+            if not txt or len(txt) < 10:
+                raise ValueError(f"Empty or too short response from Overpass API (status {response.status_code}, length={len(txt)})")
             return response.json()
         
         try:

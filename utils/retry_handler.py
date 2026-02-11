@@ -49,10 +49,9 @@ def retry_with_backoff(
                     return func(*args, **kwargs)
                 except requests.exceptions.HTTPError as e:
                     last_exception = e
-                    wait_time = base_delay  # Constant delay, not incremental
-                    
+                    status_code = e.response.status_code if e.response else None
+                    wait_time = 8 if status_code in (429, 509) else base_delay
                     if attempt < attempts - 1:
-                        status_code = e.response.status_code if e.response else None
                         error_msg = _get_http_error_message(status_code, attempt + 1, attempts, wait_time)
                         
                         if log_callback:
@@ -146,6 +145,11 @@ def _get_http_error_message(
             f"Rate limited (429). Waiting {wait_time}s before retry "
             f"(attempt {attempt}/{max_attempts})..."
         )
+    elif status_code == 509:  # Bandwidth Limit Exceeded
+        return (
+            f"Bandwidth limited (509). Waiting {wait_time}s before retry "
+            f"(attempt {attempt}/{max_attempts})..."
+        )
     elif status_code == 504:  # Gateway Timeout
         return (
             f"Gateway timeout (504). Waiting {wait_time}s before retry "
@@ -230,7 +234,6 @@ def execute_with_retry(
             return func(*args, **kwargs)
         except requests.exceptions.HTTPError as e:
             last_exception = e
-            wait_time = base_delay  # Constant delay, not incremental
             status_code = e.response.status_code if (e.response and hasattr(e.response, 'status_code')) else None
             if status_code is None and e.response is not None:
                 try:
@@ -241,6 +244,9 @@ def execute_with_retry(
                 status_code = 504
             if status_code is None and "429" in str(e):
                 status_code = 429
+            if status_code is None and "509" in str(e):
+                status_code = 509
+            wait_time = 8 if status_code in (429, 509) else base_delay
             response_text = None
             if e.response is not None and getattr(e.response, "text", None):
                 try:

@@ -45,9 +45,9 @@ class Config:
     DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '25'))
     DEFAULT_BATCH_SIZE: int = 3   # For hierarchy (Overpass); small so each rerun finishes within Streamlit timeout
     HIERARCHY_FIRST_BATCH_SIZE: int = 1   # First hierarchy batch size (minimal so first work run completes within timeout)
-    HIERARCHY_QUERY_TIMEOUT: int = 10   # Short so work run finishes before gateway timeout; 504s common on overpass-api.de
-    HIERARCHY_TIMEOUT_BUFFER: int = 2   # Added to timeout for hierarchy request only (keeps run under ~12s per batch)
-    HIERARCHY_MAX_RETRIES_CHUNKED: int = 1   # 1 attempt (no retries) so run completes quickly if Overpass 504s
+    HIERARCHY_QUERY_TIMEOUT: int = 20   # 20+2=22s; gives Overpass time to respond
+    HIERARCHY_TIMEOUT_BUFFER: int = 2   # Added to timeout for hierarchy request only
+    HIERARCHY_MAX_RETRIES_CHUNKED: int = 2   # One retry before deferring to retry stage
     DEFAULT_MAX_LOCATIONS: int = int(os.getenv('DEFAULT_MAX_LOCATIONS', '0'))  # 0 = no limit
     DEFAULT_PAUSE_BEFORE_GPT: bool = False
     DEFAULT_ENABLE_WEB_BROWSING: bool = os.getenv('ENABLE_WEB_BROWSING', 'True').lower() == 'true'

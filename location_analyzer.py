@@ -389,7 +389,7 @@ class LocationAnalyzer:
         return self._create_osm_query(min_lat, min_lon, max_lat, max_lon, self.additional_types_pattern)
 
     def _create_special_osm_query(self, min_lat, min_lon, max_lat, max_lon):
-        """Create query for special locations."""
+        """Create query for special locations (light: centroids only, max 200)."""
         return f"""
         [out:json][timeout:60];
         (
@@ -397,9 +397,7 @@ class LocationAnalyzer:
           way["landuse"="commercial"]({min_lat},{min_lon},{max_lat},{max_lon});
           relation["landuse"="commercial"]({min_lat},{min_lon},{max_lat},{max_lon});
         );
-        out body;
-        >;
-        out skel qt;
+        out center 200;
         """
     
     def _process_osm_results(self, response_data, place_type_filter=None, skip_city_block=True):
@@ -528,9 +526,10 @@ class LocationAnalyzer:
                 raise ValueError(f"Invalid JSON response from Overpass API: {str(e)}. Response preview: {response.text[:200]}")
         
         try:
+            max_attempts = 1 if query_type == "special" else config.OSM_DISCOVERY_MAX_RETRIES
             data = execute_with_retry(
                 _execute_query,
-                max_attempts=config.OSM_DISCOVERY_MAX_RETRIES,  # Use fewer retries for discovery queries
+                max_attempts=max_attempts,
                 log_callback=lambda msg: self._log(f"{query_type} query: {msg}")
             )
             result = self._process_osm_results(data, place_types, skip_city_block)

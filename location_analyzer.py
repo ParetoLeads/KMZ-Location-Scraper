@@ -28,6 +28,9 @@ from utils.exceptions import KMZParseError, OSMQueryError, GPTAPIError, Validati
 from utils.retry_handler import execute_with_retry
 from utils.cache import cache_osm_query, set_osm_query_cache, cache_hierarchy, set_hierarchy_cache
 
+# Fallback when primary Overpass instance times out (different instance may respond)
+OVERPASS_FALLBACK_URL = "https://overpass-api.de/api/interpreter"
+
 class LocationAnalyzer:
     def __init__(self, kmz_file: str, output_excel: str = None, 
                  verbose: bool = False,
@@ -239,10 +242,12 @@ class LocationAnalyzer:
                 coord_text = find_coordinates(root, namespace)
                 
                 if not coord_text:
-                    for elem in root.findall('.//*'):
+                    # root.findall('.//*') returns nothing when KML uses default namespace; iter() walks all elements
+                    for elem in root.iter():
                         if elem.tag.endswith('coordinates') or (namespace and elem.tag == f'{{{namespace}}}coordinates'):
-                            if elem.text and elem.text.strip():
-                                coord_text = elem.text.strip()
+                            raw = (elem.text or '').strip()
+                            if raw:
+                                coord_text = raw
                                 break
                 
                 if not coord_text:
@@ -509,12 +514,21 @@ class LocationAnalyzer:
         DISCOVERY_TIMEOUT = 35  # Fail fast to free slots; avoid 70s hold
 
         def _execute_query() -> Dict[str, Any]:
-            response = requests.post(
-                self.overpass_url,
-                data=query,
-                timeout=DISCOVERY_TIMEOUT,
-                headers=OSM_HEADERS,
-            )
+            try:
+                response = requests.post(
+                    self.overpass_url,
+                    data=query,
+                    timeout=DISCOVERY_TIMEOUT,
+                    headers=OSM_HEADERS,
+                )
+            except requests.exceptions.Timeout:
+                self._log(f"{query_type} query: Primary timeout, trying fallback Overpass")
+                response = requests.post(
+                    OVERPASS_FALLBACK_URL,
+                    data=query,
+                    timeout=DISCOVERY_TIMEOUT,
+                    headers=OSM_HEADERS,
+                )
             response.raise_for_status()
             # Check if response is empty or too short before parsing JSON
             txt = response.text.strip() if response.text else ""
@@ -642,14 +656,23 @@ class LocationAnalyzer:
         OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0"}
 
         def _execute_hierarchy_query() -> Dict[str, Any]:
-            """Execute the hierarchy query."""
+            """Execute the hierarchy query; on primary timeout try fallback Overpass once."""
             self._log(f"[Overpass] POST start url={self.overpass_url} timeout={timeout + buffer}s")
-            response = requests.post(
-                self.overpass_url,
-                data=query,
-                timeout=timeout + buffer,
-                headers=OSM_HEADERS,
-            )
+            try:
+                response = requests.post(
+                    self.overpass_url,
+                    data=query,
+                    timeout=timeout + buffer,
+                    headers=OSM_HEADERS,
+                )
+            except requests.exceptions.Timeout:
+                self._log("[Overpass] Primary timeout, trying fallback overpass-api.de")
+                response = requests.post(
+                    OVERPASS_FALLBACK_URL,
+                    data=query,
+                    timeout=timeout + buffer,
+                    headers=OSM_HEADERS,
+                )
             self._log(f"[Overpass] POST done status={response.status_code}")
             response.raise_for_status()
             txt = response.text.strip() if response.text else ""

@@ -14,8 +14,6 @@ import re
 import traceback
 import math
 from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 try:
     import google.generativeai as genai
     GEMINI_AVAILABLE = True
@@ -30,6 +28,9 @@ from utils.cache import cache_osm_query, set_osm_query_cache, cache_hierarchy, s
 
 # Fallback when primary Overpass instance times out (different instance may respond)
 OVERPASS_FALLBACK_URL = "https://overpass-api.de/api/interpreter"
+
+# Last time a Gemini API request was sent (for rate-limit spacing across batches/instances)
+_last_gemini_request_time: float = 0.0
 
 class LocationAnalyzer:
     def __init__(self, kmz_file: str, output_excel: str = None, 
@@ -865,7 +866,22 @@ class LocationAnalyzer:
         return parsed_results_map
     
     def _get_gemini_populations_batch(self, locations_chunk: List[Dict], start_index: int) -> Dict[int, Dict]:
-        """Sends a batch of locations to Gemini and parses the JSON array response."""
+        """Sends a batch of locations to Gemini and parses the JSON array response.
+        Enforces Gemini API rate limits (e.g. 5 RPM for 2.5 Pro) via min spacing between requests."""
+        global _last_gemini_request_time
+        min_spacing = getattr(config, 'GEMINI_MIN_SPACING_SECONDS', 12)
+        now = time.time()
+        if _last_gemini_request_time > 0:
+            elapsed = now - _last_gemini_request_time
+            if elapsed < min_spacing:
+                sleep_time = min_spacing - elapsed
+                try:
+                    self.status_callback(f"Gemini rate limit: waiting {sleep_time:.0f}s before next request.")
+                except Exception:
+                    pass
+                time.sleep(sleep_time)
+        _last_gemini_request_time = time.time()
+
         prompt = self._prepare_batch_gpt_prompt(locations_chunk, start_index)
         
         try:
@@ -885,28 +901,24 @@ class LocationAnalyzer:
             if response is None:
                 raise ValueError("Gemini API returned None response")
             
-            # Check for blocked/filtered responses
+            # finish_reason: 1=STOP, 2=MAX_TOKENS (truncated), 3=SAFETY, etc.
             if hasattr(response, 'candidates') and response.candidates:
                 candidate = response.candidates[0]
                 if hasattr(candidate, 'finish_reason'):
                     finish_reason = candidate.finish_reason
-                    # Check if response was blocked (finish_reason != STOP)
-                    if finish_reason and finish_reason != 1:  # 1 = STOP (normal completion)
-                        finish_reason_str = str(finish_reason)
-                        block_reason = f"Finish reason: {finish_reason_str}"
-                        if hasattr(response, 'prompt_feedback'):
-                            block_reason += f", Prompt feedback: {response.prompt_feedback}"
-                        # Log but don't raise - return empty results instead
+                    if finish_reason and finish_reason != 1:
+                        reason_str = str(finish_reason)
                         try:
-                            self.status_callback(f"Gemini response blocked/filtered for batch. {block_reason}. Continuing with GPT results only.")
-                        except:
-                            print(f"Gemini response blocked/filtered for batch. {block_reason}")
-                        # Return empty results map instead of raising
-                        results_map = {}
-                        for i in range(len(locations_chunk)):
-                            original_idx = start_index + i
-                            results_map[original_idx] = {"population": None, "confidence": "Blocked"}
-                        return results_map
+                            self.status_callback(f"Gemini finish_reason={reason_str} (1=OK, 2=truncated, 3+=safety).")
+                        except Exception:
+                            pass
+                        # Safety/block: return empty confidence (no "Blocked" in Excel)
+                        if finish_reason not in (1, 2):
+                            results_map = {}
+                            for i in range(len(locations_chunk)):
+                                results_map[start_index + i] = {"population": None, "confidence": ""}
+                            return results_map
+                        # finish_reason 2 = MAX_TOKENS: try to parse partial response below; don't return yet
             
             # Check if response has text attribute
             if not hasattr(response, 'text'):
@@ -950,11 +962,11 @@ class LocationAnalyzer:
             except:
                 print(error_msg)  # Fallback to print if Streamlit context unavailable
                 print(error_traceback)
-            # Return error results for all locations in batch
+            # Return error results for all locations in batch (empty confidence for Excel)
             results_map = {}
             for i in range(len(locations_chunk)):
                 original_idx = start_index + i
-                results_map[original_idx] = {"population": None, "confidence": "API Error"}
+                results_map[original_idx] = {"population": None, "confidence": ""}
             return results_map
 
         parsed_results_map = {}
@@ -1021,7 +1033,7 @@ class LocationAnalyzer:
             for i in range(len(locations_chunk)):
                 expected_idx = start_index + i
                 if expected_idx not in parsed_results_map:
-                    parsed_results_map[expected_idx] = {"population": None, "confidence": "Missing"}
+                    parsed_results_map[expected_idx] = {"population": None, "confidence": ""}
 
         except json.JSONDecodeError as e:
             # Log error without Streamlit UI updates (thread-safe)
@@ -1035,7 +1047,7 @@ class LocationAnalyzer:
                 print(error_msg)  # Fallback to print if Streamlit context unavailable
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": ""}
         except ValueError as e:
              error_traceback = traceback.format_exc()
              error_msg = f"ERROR: Error processing Gemini response structure: {e}"
@@ -1046,7 +1058,7 @@ class LocationAnalyzer:
                  print(error_msg)
              for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": "Format Error"}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": ""}
         except Exception as e:
             error_msg = f"Error during Gemini response parsing: {str(e)}"
             error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
@@ -1056,7 +1068,7 @@ class LocationAnalyzer:
                 print(error_msg)
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": ""}
 
         return parsed_results_map
     
@@ -1105,48 +1117,11 @@ class LocationAnalyzer:
                     gpt_results_map = {}
                     gemini_results_map = {}
                     
-                    # Call APIs in parallel if both are selected, otherwise call sequentially
-                    if use_openai and use_gemini:
-                        # Parallel execution for both providers
-                        with ThreadPoolExecutor(max_workers=2) as executor:
-                            future_to_provider = {}
-                            if use_openai:
-                                future = executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)
-                                future_to_provider[future] = 'gpt'
-                            if use_gemini:
-                                future = executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)
-                                future_to_provider[future] = 'gemini'
-                            
-                            # Collect results as they complete
-                            for future in as_completed(future_to_provider.keys()):
-                                provider = future_to_provider[future]
-                                try:
-                                    result = future.result()
-                                    # Store result in appropriate map
-                                    if provider == 'gpt':
-                                        gpt_results_map = result
-                                    elif provider == 'gemini':
-                                        gemini_results_map = result
-                                except Exception as e:
-                                    error_traceback = traceback.format_exc()
-                                    # Use status_callback instead of _log to avoid Streamlit context issues in threads
-                                    try:
-                                        self.status_callback(f"  Error in {provider} API call: {str(e)}")
-                                        self.status_callback(f"  Full traceback:\n{error_traceback}")
-                                    except:
-                                        print(f"  Error in {provider} API call: {str(e)}")
-                                        print(f"  Full traceback:\n{error_traceback}")
-                                    # Set empty result map for failed provider
-                                    if provider == 'gpt':
-                                        gpt_results_map = {}
-                                    elif provider == 'gemini':
-                                        gemini_results_map = {}
-                    else:
-                        # Sequential execution for single provider
-                        if use_openai:
-                            gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
-                        if use_gemini:
-                            gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
+                    # Sequential: GPT first, then Gemini (Gemini rate-limit spacing enforced inside _get_gemini_populations_batch)
+                    if use_openai:
+                        gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
+                    if use_gemini:
+                        gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
                     
                     # Store GPT results
                     success_count = 0
@@ -1279,23 +1254,9 @@ class LocationAnalyzer:
         gpt_results_map = {}
         gemini_results_map = {}
         if use_openai and use_gemini:
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                future_to_provider = {}
-                future_to_provider[executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)] = "gpt"
-                future_to_provider[executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)] = "gemini"
-                for future in as_completed(future_to_provider.keys()):
-                    provider = future_to_provider[future]
-                    try:
-                        result = future.result()
-                        if provider == "gpt":
-                            gpt_results_map = result
-                        else:
-                            gemini_results_map = result
-                    except Exception as e:
-                        if provider == "gpt":
-                            gpt_results_map = {}
-                        else:
-                            gemini_results_map = {}
+            # Sequential: GPT first, then Gemini. Ensures Gemini rate-limit spacing (e.g. 5 RPM) is enforceable between batches.
+            gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
+            gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
         else:
             if use_openai:
                 gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
@@ -1440,6 +1401,12 @@ class LocationAnalyzer:
             for col in numeric_cols:
                 if col in df_full.columns:
                     df_full[col] = pd.to_numeric(df_full[col], errors='coerce').astype('Float64')
+            # Sanitize gemini_confidence for export: only High/Medium/Low; no "Blocked", "API Error", etc.
+            if 'gemini_confidence' in df_full.columns:
+                allowed = {'High', 'Medium', 'Low'}
+                df_full['gemini_confidence'] = df_full['gemini_confidence'].apply(
+                    lambda x: x if x in allowed else ''
+                )
             
             # Clean Data Sheet - Filtered to >10,000 population
             # Use combined_population if available, otherwise fall back to gpt_population or gemini_population

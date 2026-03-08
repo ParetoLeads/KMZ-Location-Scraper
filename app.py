@@ -105,18 +105,20 @@ if 'hierarchy_retry_index' not in st.session_state:
 if 'rerun_count' not in st.session_state:
     st.session_state.rerun_count = 0
 
-# Log every rerun at the top level
+# Log rerun briefly: only on stage change, first/last run, or every 15 reruns (reduces noise)
 st.session_state.rerun_count += 1
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] ========================================")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START] RERUN #{st.session_state.rerun_count}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START] Session state snapshot:")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   processing={st.session_state.processing}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   processing_stage={st.session_state.processing_stage}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   hierarchy_batch_index={st.session_state.hierarchy_batch_index}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   population_batch_index={st.session_state.population_batch_index}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   locations_count={len(st.session_state.processing_locations) if st.session_state.processing_locations else 0}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP-START]   results={'exists' if st.session_state.results else 'None'}")
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] ========================================")
+_last_stage = getattr(st.session_state, '_log_stage', None)
+_cur_stage = st.session_state.processing_stage if st.session_state.processing else "idle"
+_do_log = (
+    _cur_stage != _last_stage
+    or st.session_state.rerun_count <= 2
+    or st.session_state.rerun_count % 15 == 1
+)
+if _do_log:
+    st.session_state._log_stage = _cur_stage
+    _ts = datetime.now().strftime("%H:%M:%S")
+    _n = len(st.session_state.processing_locations) if st.session_state.processing_locations else 0
+    st.session_state.progress_messages.append(f"[{_ts}] RERUN #{st.session_state.rerun_count} | stage={_cur_stage} | locations={_n}")
 
 # Helper function to save processing state
 def save_processing_state(stage, locations, config_dict, hierarchy_idx=0, population_idx=0):
@@ -402,12 +404,7 @@ if uploaded_file is not None:
                     st.session_state.tmp_kmz_path = None
 
         # State machine: run one chunk per rerun when processing is active
-        # IMPORTANT: This block is OUTSIDE the button click block so it runs on every rerun
-        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] ========== RERUN CHECKPOINT ==========")
-        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] State machine entry check: processing={st.session_state.processing}, processing_stage={st.session_state.processing_stage}")
         if st.session_state.processing and st.session_state.processing_stage is not None:
-            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [SM-ENTER] ✓ CONDITION MET - Entering state machine")
-            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [SM-ENTER] Current state: Stage={st.session_state.processing_stage}, hierarchy_idx={st.session_state.hierarchy_batch_index}, population_idx={st.session_state.population_batch_index}, locations_count={len(st.session_state.processing_locations) if st.session_state.processing_locations else 0}")
             progress_container = st.container()
             with progress_container:
                 stage_text = st.empty()
@@ -450,8 +447,6 @@ if uploaded_file is not None:
             chunk_size = config.DEFAULT_CHUNK_SIZE
             stage = st.session_state.processing_stage
             first_batch_size = config.HIERARCHY_FIRST_BATCH_SIZE
-            _ts = datetime.now().strftime("%H:%M:%S")
-            progress_cb(f"[{_ts}] [SM] ENTER run_id={run_id} stage={stage} hierarchy_idx={st.session_state.hierarchy_batch_index} population_idx={st.session_state.population_batch_index} locations={len(locations)}")
             if stage == "hierarchy":
                 idx = st.session_state.hierarchy_batch_index
                 n = len(locations) if locations else 0
@@ -469,22 +464,15 @@ if uploaded_file is not None:
             # Two-phase: commit run (log RUN, save, rerun) so state persists even if work run is killed
             commit_key = (stage, idx)
             commit_done = st.session_state.get("_commit_done") or set()
-            in_commit_done = commit_key in commit_done
-            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] commit_key=({stage},{idx}) commit_done_size={len(commit_done)} in_commit_done={in_commit_done} doing_commit_run={not in_commit_done}")
             if commit_key not in commit_done:
                 ts = datetime.now().strftime("%H:%M:%S")
-                progress_cb(f"[{ts}] [SM] COMMIT: writing RUN and CALL_START, then st.rerun()")
                 progress_cb(f"[{ts}] RUN #{run_id} stage={stage} batch {idx + 1}/{total_batches}")
-                progress_cb(f"[{ts}] CALL_START next batch {idx + 1}/{total_batches}")
+                progress_cb(f"[{ts}] CALL_START batch {idx + 1}/{total_batches}")
                 st.session_state.progress_messages = progress_messages.copy()
                 st.session_state.status_messages = status_messages.copy()
                 st.session_state._commit_done = set(commit_done) | {commit_key}
-                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] COMMIT: state saved, calling st.rerun()")
-                st.session_state.progress_messages = progress_messages.copy()
-                st.session_state.status_messages = status_messages.copy()
                 st.rerun()
 
-            progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] WORK: checking processing_config and kmz file...")
             cfg = st.session_state.processing_config
             if not cfg:
                 progress_cb("[ERROR] Processing config missing. Please start the analysis again.")
@@ -501,12 +489,10 @@ if uploaded_file is not None:
                 st.rerun()
 
             try:
-                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] WORK: creating analyzer (skip_ai_log={st.session_state.get('_logged_ai', False)})...")
                 skip_ai_log = st.session_state.get("_logged_ai", False)
                 analyzer = create_analyzer_from_state(progress_cb, status_cb, skip_ai_status_log=skip_ai_log)
                 st.session_state._logged_ai = True
                 locations = st.session_state.processing_locations
-                progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] WORK: analyzer created, entering stage branch (stage={st.session_state.processing_stage})")
 
                 if st.session_state.processing_stage == "hierarchy":
                     idx = st.session_state.hierarchy_batch_index
@@ -519,11 +505,9 @@ if uploaded_file is not None:
                         batch_start = first_batch_size + (idx - 1) * batch_size
                         batch_end = batch_start + batch_size
                     batch = locations[batch_start:batch_end]
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: idx={idx} batch_start={batch_start} batch_end={batch_end} len(batch)={len(batch)} total_batches={total_batches}")
                     if batch:
                         hierarchy_timeout = getattr(config, "HIERARCHY_QUERY_TIMEOUT", 20)
                         hierarchy_retries = getattr(config, "HIERARCHY_MAX_RETRIES_CHUNKED", 2)
-                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: calling fetch_admin_hierarchy_batch timeout={hierarchy_timeout}s retries={hierarchy_retries} ...")
                         analyzer._log(f"Retrieving hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)...")
                         analyzer._log(f"CALL_START Overpass hierarchy batch {idx + 1}/{total_batches} ({len(batch)} locations)")
                         try:
@@ -569,10 +553,8 @@ if uploaded_file is not None:
                             st.session_state.processing_stage = "population"
                             st.session_state.population_batch_index = 0
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: State updated. NEW stage={st.session_state.processing_stage}, population_idx={st.session_state.population_batch_index}")
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: saving state and st.rerun()")
                     st.session_state.progress_messages = progress_messages
                     st.session_state.status_messages = status_messages
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] hierarchy: State saved. About to call st.rerun()")
                     st.rerun()
 
                 elif st.session_state.processing_stage == "hierarchy_retry":
@@ -619,21 +601,15 @@ if uploaded_file is not None:
                     st.rerun()
 
                 elif st.session_state.processing_stage == "population":
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: ENTERED population stage")
                     idx = st.session_state.population_batch_index
                     num_batches = (len(locations) + chunk_size - 1) // chunk_size
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Processing batch {idx + 1}/{num_batches}, locations={len(locations)}, chunk_size={chunk_size}")
                     analyzer._log(f"Calculating population for batch {idx + 1}/{num_batches}...")
                     analyzer._log(f"CALL_START Population batch {idx + 1}/{num_batches}")
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Calling estimate_populations_single_batch(locations, {idx})...")
                     analyzer.estimate_populations_single_batch(locations, idx)
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: estimate_populations_single_batch() completed")
                     analyzer._log(f"CALL_END Population batch {idx + 1}/{num_batches}")
                     if idx < num_batches - 1:
-                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Sleeping for {config.GPT_BATCH_DELAY}s before next batch...")
                         time.sleep(config.GPT_BATCH_DELAY)
                     st.session_state.population_batch_index = idx + 1
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Updated population_batch_index to {st.session_state.population_batch_index}")
                     if (idx + 1) * chunk_size >= len(locations):
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: ALL POPULATION BATCHES COMPLETE! Transitioning to excel stage")
                         analyzer._log("CHECKPOINT: Stage 4 - Population estimation completed")
@@ -642,29 +618,20 @@ if uploaded_file is not None:
                         progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: Stage updated to '{st.session_state.processing_stage}'")
                     st.session_state.progress_messages = progress_messages
                     st.session_state.status_messages = status_messages
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] population: State saved, calling st.rerun()")
                     st.rerun()
 
                 elif st.session_state.processing_stage == "excel":
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: ENTERED excel stage")
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Calling save_to_excel({len(locations)} locations)...")
                     excel_data = analyzer.save_to_excel(locations)
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: save_to_excel() completed. excel_data={'SUCCESS' if excel_data else 'FAILED'}")
                     st.session_state.results = locations
                     st.session_state.excel_data = excel_data
                     st.session_state.progress_messages = progress_messages
                     st.session_state.status_messages = status_messages
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Marking progress as complete and clearing state...")
                     progress_ui.mark_complete()
                     clear_processing_state()
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Processing state cleared. processing={st.session_state.processing}, processing_stage={st.session_state.processing_stage}")
                     if excel_data:
                         st.success(f"✅ Successfully processed {len(locations)} locations!")
-                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: SUCCESS - Displaying success message")
                     else:
                         st.warning("⚠️ Excel export failed, but results are available below.")
-                        progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: WARNING - Excel export failed")
-                    progress_cb(f"[{datetime.now().strftime('%H:%M:%S')}] [SM] excel: Calling st.rerun() to display results...")
                     st.rerun()
 
             except Exception as e:
@@ -702,9 +669,8 @@ if uploaded_file is not None:
                 st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [CHECK] ⚠️ CRITICAL: processing_stage is None - stage was not set or was cleared")
 
 # Display results
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [DISPLAY] Checking if results should be displayed: results={'exists' if st.session_state.results is not None else 'None'}")
 if st.session_state.results is not None:
-    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [DISPLAY] ✓ Displaying results for {len(st.session_state.results)} locations")
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [DISPLAY] Showing results for {len(st.session_state.results)} locations")
     st.divider()
     st.header("📊 Results")
     

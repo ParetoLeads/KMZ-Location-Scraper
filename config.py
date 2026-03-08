@@ -42,9 +42,9 @@ class Config:
     DEFAULT_MAX_RETRIES: int = 3  # Legacy default (kept for compatibility)
     
     # Processing Settings
-    DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '25'))
-    DEFAULT_BATCH_SIZE: int = 3   # For hierarchy (Overpass); small so each rerun finishes within Streamlit timeout
-    HIERARCHY_FIRST_BATCH_SIZE: int = 1   # First hierarchy batch size (minimal so first work run completes within timeout)
+    DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '30'))
+    DEFAULT_BATCH_SIZE: int = 5   # For hierarchy (Overpass); larger batches = fewer round-trips
+    HIERARCHY_FIRST_BATCH_SIZE: int = 3   # First hierarchy batch size
     HIERARCHY_QUERY_TIMEOUT: int = 20   # 20+2=22s; gives Overpass time to respond
     HIERARCHY_TIMEOUT_BUFFER: int = 2   # Added to timeout for hierarchy request only
     HIERARCHY_MAX_RETRIES_CHUNKED: int = 2   # One retry before deferring to retry stage
@@ -58,7 +58,7 @@ class Config:
     
     # Delay Settings (in seconds)
     OSM_QUERY_DELAY: int = 2  # Steady pace between query types; avoids 429/509
-    HIERARCHY_BATCH_DELAY: int = 2  # Steady pace between hierarchy batches
+    HIERARCHY_BATCH_DELAY: int = int(os.getenv('HIERARCHY_BATCH_DELAY', '1'))  # Seconds between hierarchy batches
     GPT_BATCH_DELAY: int = int(os.getenv('GPT_BATCH_DELAY', '2'))  # Between GPT batches
     
     # GPT Settings

@@ -72,7 +72,7 @@ class Config:
     GEMINI_TEMPERATURE: float = float(os.getenv('GEMINI_TEMPERATURE', '0.2'))
     GEMINI_TOP_P: float = float(os.getenv('GEMINI_TOP_P', '0.95'))
     GEMINI_TOP_K: int = int(os.getenv('GEMINI_TOP_K', '40'))
-    GEMINI_MAX_OUTPUT_TOKENS: int = int(os.getenv('GEMINI_MAX_OUTPUT_TOKENS', '4096'))
+    GEMINI_MAX_OUTPUT_TOKENS: int = int(os.getenv('GEMINI_MAX_OUTPUT_TOKENS', '8192'))
     # Rate limit: Tier 1 paid ≈ 150–300 RPM. Use 2s min spacing (30 RPM) to stay well under limit.
     GEMINI_MIN_SPACING_SECONDS: int = 2
     

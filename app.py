@@ -179,19 +179,27 @@ def create_analyzer_from_state(progress_callback, status_callback, skip_ai_statu
         skip_ai_status_log=skip_ai_status_log,
     )
 
-# Process button
-st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] Checking if file uploaded: {uploaded_file is not None}")
+# Process button (log file/button state only when it changes or first 2 reruns, to reduce log noise)
+app_log_key = (uploaded_file is not None, st.session_state.processing)
+should_log_app = (st.session_state.rerun_count <= 2) or (app_log_key != getattr(st.session_state, "_last_app_log_state", (None, None)))
+if should_log_app:
+    st.session_state._last_app_log_state = app_log_key
+if should_log_app:
+    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] Checking if file uploaded: {uploaded_file is not None}")
 if uploaded_file is not None:
-    st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] File uploaded: {uploaded_file.name}, size={uploaded_file.size} bytes")
+    if should_log_app:
+        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] File uploaded: {uploaded_file.name}, size={uploaded_file.size} bytes")
     # Validate file size
     try:
         validate_file_size(uploaded_file.size)
-        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] File size validation passed")
+        if should_log_app:
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] File size validation passed")
     except ValidationError as e:
         st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] ERROR: File size validation failed: {str(e)}")
         st.error(f"❌ {str(e)}")
     else:
-        st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] Checking button state: processing={st.session_state.processing}")
+        if should_log_app:
+            st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [APP] Checking button state: processing={st.session_state.processing}")
         if st.button("🚀 Start Analysis", type="primary", disabled=st.session_state.processing):
             st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] ========================================")
             st.session_state.progress_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] [BUTTON] START ANALYSIS BUTTON CLICKED!")
@@ -1101,7 +1109,10 @@ with st.expander("📋 Processing Log (click to expand)", expanded=False):
             elif "[SM] excel: ENTERED excel stage" in msg:
                 flow_stages.append("✅ Excel stage entered")
             elif "STATE MACHINE NOT ENTERED" in msg:
-                flow_stages.append("❌ State machine NOT entered (critical issue)")
+                if st.session_state.results is not None and not st.session_state.processing:
+                    flow_stages.append("✅ State machine not entered (expected after completion)")
+                else:
+                    flow_stages.append("❌ State machine NOT entered (critical issue)")
         
         if flow_stages:
             for stage in flow_stages:

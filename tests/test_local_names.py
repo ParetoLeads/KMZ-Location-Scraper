@@ -143,5 +143,92 @@ class TestLocalNamesStorage(unittest.TestCase):
         self.assertEqual(result[0]["local_names"], ["Hoboken", "Mile Square City"])
 
 
+class TestLocalNamesExcel(unittest.TestCase):
+
+    def _make_test_locations(self):
+        return [
+            {
+                "name": "Hoboken",
+                "type": "city",
+                "latitude": 40.744,
+                "longitude": -74.032,
+                "gpt_population": 52000,
+                "gpt_confidence": "High",
+                "gemini_population": 51000,
+                "gemini_confidence": "High",
+                "combined_population": 51500,
+                "combined_confidence": "High",
+                "local_names": ["Hoboken", "Mile Square City", "Hoboken NJ"],
+                "admin_hierarchy": {},
+            }
+        ]
+
+    def _get_sheet_headers(self, output_bytes, sheet_name):
+        import openpyxl
+        from io import BytesIO
+        wb = openpyxl.load_workbook(BytesIO(output_bytes))
+        ws = wb[sheet_name]
+        return [cell.value for cell in ws[1]]
+
+    def _get_cell_value(self, output_bytes, sheet_name, row, col_name):
+        import openpyxl
+        from io import BytesIO
+        wb = openpyxl.load_workbook(BytesIO(output_bytes))
+        ws = wb[sheet_name]
+        headers = [cell.value for cell in ws[1]]
+        col_idx = headers.index(col_name) + 1
+        return ws.cell(row=row, column=col_idx).value
+
+    def test_full_data_sheet_has_local_search_names_column(self):
+        """Full Data sheet must include a 'Local Search Names' column."""
+        from location_analyzer import LocationAnalyzer
+        analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        analyzer._log = lambda msg: None
+        analyzer.output_excel = "test_output.xlsx"
+
+        output = analyzer.save_to_excel(self._make_test_locations())
+        self.assertIsNotNone(output)
+        output_bytes = output.read()
+
+        headers = self._get_sheet_headers(output_bytes, "Full Data")
+        self.assertIn("Local Search Names", headers,
+            f"Full Data sheet must have 'Local Search Names' column, got: {headers}")
+
+        cell_value = self._get_cell_value(output_bytes, "Full Data", 2, "Local Search Names")
+        self.assertIn("Hoboken", cell_value,
+            f"Local Search Names cell should contain 'Hoboken', got: {cell_value!r}")
+
+    def test_clean_sheet_has_local_search_names_column(self):
+        """Clean Data sheet must include a 'Local Search Names' column."""
+        from location_analyzer import LocationAnalyzer
+        analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        analyzer._log = lambda msg: None
+        analyzer.output_excel = "test_output.xlsx"
+
+        output = analyzer.save_to_excel(self._make_test_locations())
+        self.assertIsNotNone(output)
+        output_bytes = output.read()
+
+        headers = self._get_sheet_headers(output_bytes, "Clean Data")
+        self.assertIn("Local Search Names", headers,
+            f"Clean Data sheet must have 'Local Search Names' column, got: {headers}")
+
+    def test_local_names_are_comma_separated(self):
+        """local_names list must be joined as comma-separated string in Excel."""
+        from location_analyzer import LocationAnalyzer
+        analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        analyzer._log = lambda msg: None
+        analyzer.output_excel = "test_output.xlsx"
+
+        output = analyzer.save_to_excel(self._make_test_locations())
+        output_bytes = output.read()
+
+        cell_value = self._get_cell_value(output_bytes, "Full Data", 2, "Local Search Names")
+        self.assertIn(",", cell_value,
+            f"Multiple local names should be comma-separated, got: {cell_value!r}")
+        self.assertIn("Mile Square City", cell_value)
+        self.assertIn("Hoboken NJ", cell_value)
+
+
 if __name__ == "__main__":
     unittest.main()

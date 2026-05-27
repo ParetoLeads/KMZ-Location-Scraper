@@ -1456,7 +1456,8 @@ class LocationAnalyzer:
                 'gemini_population',
                 'gemini_confidence',
                 'combined_population',
-                'combined_confidence'
+                'combined_confidence',
+                'local_names',
             ]
             
             for col in final_columns:
@@ -1464,7 +1465,14 @@ class LocationAnalyzer:
                     df[col] = None
             
             df_full = df[final_columns].copy()
-            df_full.columns = [col.replace('admin_hierarchy_', '') for col in df_full.columns]
+            # Convert local_names list to comma-separated string for Excel compatibility
+            if 'local_names' in df_full.columns:
+                df_full['local_names'] = df_full['local_names'].apply(
+                    lambda x: ', '.join(x) if isinstance(x, list) else (str(x) if x else '')
+                )
+            col_rename = {col: col.replace('admin_hierarchy_', '') for col in df_full.columns}
+            col_rename['local_names'] = 'Local Search Names'
+            df_full = df_full.rename(columns=col_rename)
             
             numeric_cols = ['gpt_population', 'gemini_population', 'combined_population', 'containing_level']
             for col in numeric_cols:
@@ -1486,8 +1494,11 @@ class LocationAnalyzer:
                 elif 'gemini_population' in df_full.columns and not df_full['gemini_population'].isna().all():
                     pop_column = 'gemini_population'
             
-            df_clean = df_full[['name', pop_column]].copy()
-            df_clean.columns = ['Location Name', 'Population']
+            local_col = 'Local Search Names' if 'Local Search Names' in df_full.columns else None
+            clean_cols = ['name', pop_column] + ([local_col] if local_col else [])
+            df_clean = df_full[clean_cols].copy()
+            clean_col_names = ['Location Name', 'Population'] + (['Local Search Names'] if local_col else [])
+            df_clean.columns = clean_col_names
             
             # Filter to only locations with population > threshold
             df_clean = df_clean[

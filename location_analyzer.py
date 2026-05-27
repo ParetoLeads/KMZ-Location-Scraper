@@ -719,53 +719,61 @@ class LocationAnalyzer:
             return None
     
     def _prepare_batch_gpt_prompt(self, locations_chunk: List[Dict], start_index: int) -> str:
-        """Creates the prompt for a batch of locations for GPT population estimation."""
-        prompt_header = ( 
-            "You are an AI assistant specializing in accurately retrieving demographic data based on geographic context. "
-            "Your task is to estimate the most recent known residential population for each of the locations listed below.\n\n"
+        """Creates the prompt for a batch of locations for GPT population estimation and local names."""
+        prompt_header = (
+            "You are an AI assistant specializing in accurately retrieving demographic data and local geographic knowledge. "
+            "Your task is to estimate the most recent known residential population for each location listed below, "
+            "and also identify all colloquial names and local search terms used for each location.\n\n"
             "For each location, you are provided with:\n"
             "- 'index': An identifier for the location within the overall list (starting from {start_index}).\n"
-            "- 'name': The name of the specific location.\n"
+            "- 'name': The official name of the specific location.\n"
             "- 'type': The type of the location (e.g., city, suburb, neighbourhood).\n"
             "- 'parent_name': The name of the administrative area directly containing the location.\n"
             "- 'level_4_name': The name of the higher-level administrative area (e.g., province or state).\n"
             "- 'level_2_name': The name of the country.\n\n"
             "**Crucially, use the provided 'type', 'parent_name', 'level_4_name', and 'level_2_name' to disambiguate the location 'name' "
-            "and ensure you are retrieving the population for the correct place.**\n\n"
+            "and ensure you are retrieving data for the correct place.**\n\n"
             "Provide your answer ONLY as a single, valid JSON **array**. Each object in the array must correspond to one location from the input list below, respecting the original order.\n"
             "Do not include any introductory text, explanations, or summaries before or after the JSON array.\n"
             "Do not wrap the JSON in markdown code blocks (no ```json or ``` markers). Provide raw JSON only.\n"
             "Each object in the JSON array must contain:\n"
             "- 'index': The original integer index provided for the location.\n"
             "- 'population': The estimated population as an integer. If the population is unknown or cannot be reliably estimated, use `null`.\n"
-            "- 'confidence': Your confidence in the estimate as a string: 'High', 'Medium', or 'Low'.\n\n"
-            "**Estimation Guidance:** For locations with type 'suburb' or 'neighbourhood', if a direct, reliable population figure isn't found in your knowledge, "
-            "provide a reasonable **estimate** based on the context (parent_name, level_4_name) and typical population densities for such areas. "
-            "Assign **'Medium'** confidence to these well-informed estimates. Assign 'Low' confidence only if even estimation is highly uncertain.\n\n"
+            "- 'confidence': Your confidence in the population estimate as a string: 'High', 'Medium', or 'Low'.\n"
+            "- 'local_names': A JSON array of strings listing every name, nickname, abbreviation, or colloquial term "
+            "that residents and locals actually use when searching for this location. These will be used as Google Ads keywords, "
+            "so: use plain text only (no special characters except hyphens and spaces), use standard title case, "
+            "do not include the country or state unless locals habitually include it. "
+            "Include the official name itself as the first entry. Include shortened forms, regional names, and common informal names. "
+            "If there is only one known name, return an array with just that one name.\n\n"
+            "**Population Estimation Guidance:** For locations with type 'suburb' or 'neighbourhood', if a direct, reliable population figure "
+            "isn't found in your knowledge, provide a reasonable **estimate** based on the context (parent_name, level_4_name) and typical "
+            "population densities for such areas. Assign **'Medium'** confidence to these well-informed estimates. "
+            "Assign 'Low' confidence only if even estimation is highly uncertain.\n\n"
             "Example Response Format (for a batch of 3 locations with indices 0, 1, 2):\n"
             "[\n"
-            "  {\"index\": 0, \"population\": 186948, \"confidence\": \"High\"},\n"
-            "  {\"index\": 1, \"population\": 25000, \"confidence\": \"Medium\"},\n"
-            "  {\"index\": 2, \"population\": null, \"confidence\": \"Low\"}\n"
+            "  {\"index\": 0, \"population\": 186948, \"confidence\": \"High\", \"local_names\": [\"Hoboken\", \"Hoboken NJ\", \"Mile Square City\"]},\n"
+            "  {\"index\": 1, \"population\": 25000, \"confidence\": \"Medium\", \"local_names\": [\"Jersey City Heights\", \"The Heights\"]},\n"
+            "  {\"index\": 2, \"population\": null, \"confidence\": \"Low\", \"local_names\": [\"Weehawken\"]}\n"
             "]\n\n"
             "--- START LOCATIONS ---"
         )
-        
+
         locations_data = []
         for i, loc in enumerate(locations_chunk):
             original_index = start_index + i
-            admin_hierarchy = loc.get('admin_hierarchy', {}) 
-            
+            admin_hierarchy = loc.get('admin_hierarchy', {})
+
             location_info = {
                 "index": original_index,
                 "name": loc.get('name', 'Unknown'),
-                "type": loc.get('type', 'unknown'), 
-                "parent_name": admin_hierarchy.get('parent_name'), 
+                "type": loc.get('type', 'unknown'),
+                "parent_name": admin_hierarchy.get('parent_name'),
                 "level_4_name": admin_hierarchy.get('level_4_name'),
                 "level_2_name": admin_hierarchy.get('level_2_name')
             }
             locations_data.append(location_info)
-            
+
         locations_json_str = json.dumps(locations_data, indent=2, ensure_ascii=False)
 
         prompt_footer = (

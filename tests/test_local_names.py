@@ -95,5 +95,53 @@ class TestLocalNamesParsing(unittest.TestCase):
             "Should fall back to official name when local_names missing")
 
 
+class TestLocalNamesStorage(unittest.TestCase):
+
+    def test_estimate_populations_initializes_local_names(self):
+        """estimate_populations must initialize local_names on every location."""
+        from location_analyzer import LocationAnalyzer
+        analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        analyzer._log = lambda msg: None
+        analyzer.use_gpt = False
+        analyzer.use_openai = False
+        analyzer.use_gemini_flag = False
+        analyzer._ensure_ai_clients = lambda: None
+        analyzer.chunk_size = 5
+
+        locations = [
+            {"name": "Hoboken", "type": "city", "admin_hierarchy": {}},
+            {"name": "Weehawken", "type": "suburb", "admin_hierarchy": {}},
+        ]
+        result = analyzer.estimate_populations(locations)
+
+        for loc in result:
+            self.assertIn("local_names", loc,
+                f"Location '{loc.get('name')}' must have 'local_names' after estimate_populations")
+            self.assertIsInstance(loc["local_names"], list)
+
+    def test_estimate_populations_stores_gpt_local_names(self):
+        """estimate_populations must copy local_names from GPT batch result into each location."""
+        from location_analyzer import LocationAnalyzer
+        from unittest.mock import patch
+        analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        analyzer._log = lambda msg: None
+        analyzer.use_gpt = True
+        analyzer.use_openai = True
+        analyzer.use_gemini_flag = False
+        analyzer._ensure_ai_clients = lambda: None
+        analyzer.chunk_size = 5
+        analyzer.status_callback = lambda msg: None
+        analyzer.gpt_model = "gpt-4-turbo"
+
+        locations = [{"name": "Hoboken", "type": "city", "admin_hierarchy": {}}]
+
+        with patch.object(analyzer, '_get_gpt_populations_batch', return_value={
+            0: {"population": 52000, "confidence": "High", "local_names": ["Hoboken", "Mile Square City"]}
+        }):
+            result = analyzer.estimate_populations(locations)
+
+        self.assertEqual(result[0]["local_names"], ["Hoboken", "Mile Square City"])
+
+
 if __name__ == "__main__":
     unittest.main()

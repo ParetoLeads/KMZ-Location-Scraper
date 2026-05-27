@@ -1142,6 +1142,7 @@ class LocationAnalyzer:
             loc["combined_confidence"] = None
             loc["final_population"] = 0
             loc["population_source"] = "None"
+            loc["local_names"] = []
 
         # Determine which AI provider(s) to use
         use_openai = self.use_gpt and self.use_openai
@@ -1181,18 +1182,31 @@ class LocationAnalyzer:
                     # Store GPT results
                     success_count = 0
                     for original_idx, result_data in gpt_results_map.items():
-                        if 0 <= original_idx < len(locations): 
+                        if 0 <= original_idx < len(locations):
                             locations[original_idx]["gpt_population"] = result_data.get("population")
                             locations[original_idx]["gpt_confidence"] = result_data.get("confidence")
+                            gpt_local = result_data.get("local_names", [])
+                            if gpt_local:
+                                locations[original_idx]["local_names"] = gpt_local
                             if result_data.get("population") is not None:
                                 success_count += 1
                     
                     # Store Gemini results
                     gemini_success_count = 0
                     for original_idx, result_data in gemini_results_map.items():
-                        if 0 <= original_idx < len(locations): 
+                        if 0 <= original_idx < len(locations):
                             locations[original_idx]["gemini_population"] = result_data.get("population")
                             locations[original_idx]["gemini_confidence"] = result_data.get("confidence")
+                            gemini_local = result_data.get("local_names", [])
+                            if gemini_local:
+                                existing = locations[original_idx].get("local_names", [])
+                                existing_lower = {n.lower() for n in existing}
+                                merged = list(existing)
+                                for n in gemini_local:
+                                    if n.lower() not in existing_lower:
+                                        merged.append(n)
+                                        existing_lower.add(n.lower())
+                                locations[original_idx]["local_names"] = merged
                             if result_data.get("population") is not None:
                                 gemini_success_count += 1
                     

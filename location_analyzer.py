@@ -518,7 +518,7 @@ class LocationAnalyzer:
             try:
                 response = requests.post(
                     self.overpass_url,
-                    data=query,
+                    data={"data": query},
                     timeout=DISCOVERY_TIMEOUT,
                     headers=OSM_HEADERS,
                 )
@@ -526,7 +526,7 @@ class LocationAnalyzer:
                 self._log(f"{query_type} query: Primary timeout, trying fallback Overpass")
                 response = requests.post(
                     OVERPASS_FALLBACK_URL,
-                    data=query,
+                    data={"data": query},
                     timeout=DISCOVERY_TIMEOUT,
                     headers=OSM_HEADERS,
                 )
@@ -662,7 +662,7 @@ class LocationAnalyzer:
             try:
                 response = requests.post(
                     self.overpass_url,
-                    data=query,
+                    data={"data": query},
                     timeout=timeout + buffer,
                     headers=OSM_HEADERS,
                 )
@@ -670,7 +670,7 @@ class LocationAnalyzer:
                 self._log("[Overpass] Primary timeout, trying fallback overpass-api.de")
                 response = requests.post(
                     OVERPASS_FALLBACK_URL,
-                    data=query,
+                    data={"data": query},
                     timeout=timeout + buffer,
                     headers=OSM_HEADERS,
                 )

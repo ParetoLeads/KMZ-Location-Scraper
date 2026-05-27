@@ -48,5 +48,39 @@ class TestOverpassPostEncoding(unittest.TestCase):
         self.assertIn("data", data_arg, "dict must have key 'data' containing the Overpass query")
 
 
+class TestOverpassFallbackChain(unittest.TestCase):
+
+    @patch("location_analyzer.requests.post")
+    def test_second_fallback_tried_after_first_times_out(self, mock_post):
+        """If primary times out, fall through the OVERPASS_FALLBACK_URLS list."""
+        import requests as req_lib
+
+        call_count = [0]
+        def side_effect(url, **kwargs):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                raise req_lib.exceptions.Timeout()
+            return _make_mock_response({"elements": []})
+
+        mock_post.side_effect = side_effect
+
+        from location_analyzer import LocationAnalyzer
+        analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        analyzer.overpass_url = "https://overpass.kumi.systems/api/interpreter"
+        analyzer.polygon_points = [(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)]
+        analyzer.primary_place_types = ["city"]
+        analyzer.additional_place_types = []
+        analyzer.special_place_types = []
+        analyzer.primary_types_pattern = "city"
+        analyzer._log = lambda msg: None
+
+        with patch("location_analyzer.cache_osm_query", return_value=None), \
+             patch("location_analyzer.set_osm_query_cache"):
+            result = analyzer._find_osm_locations(analyzer.polygon_points, "primary", ["city"])
+
+        self.assertGreaterEqual(call_count[0], 3,
+            "Should try primary + at least 2 fallbacks before succeeding")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -26,8 +26,12 @@ from utils.exceptions import KMZParseError, OSMQueryError, GPTAPIError, Validati
 from utils.retry_handler import execute_with_retry
 from utils.cache import cache_osm_query, set_osm_query_cache, cache_hierarchy, set_hierarchy_cache
 
-# Fallback when primary Overpass instance times out (different instance may respond)
-OVERPASS_FALLBACK_URL = "https://overpass-api.de/api/interpreter"
+# Ordered fallback chain for Overpass API (tried in sequence on timeout)
+OVERPASS_FALLBACK_URLS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter",
+]
+OVERPASS_FALLBACK_URL = OVERPASS_FALLBACK_URLS[0]  # kept for hierarchy function compatibility
 
 # Last time a Gemini API request was sent (for rate-limit spacing across batches/instances)
 _last_gemini_request_time: float = 0.0
@@ -523,15 +527,22 @@ class LocationAnalyzer:
                     headers=OSM_HEADERS,
                 )
             except requests.exceptions.Timeout:
-                self._log(f"{query_type} query: Primary timeout, trying fallback Overpass")
-                response = requests.post(
-                    OVERPASS_FALLBACK_URL,
-                    data={"data": query},
-                    timeout=DISCOVERY_TIMEOUT,
-                    headers=OSM_HEADERS,
-                )
+                response = None
+                for fallback_url in OVERPASS_FALLBACK_URLS:
+                    self._log(f"{query_type} query: Primary timeout, trying fallback {fallback_url}")
+                    try:
+                        response = requests.post(
+                            fallback_url,
+                            data={"data": query},
+                            timeout=DISCOVERY_TIMEOUT,
+                            headers=OSM_HEADERS,
+                        )
+                        break
+                    except requests.exceptions.Timeout:
+                        continue
+                if response is None:
+                    raise requests.exceptions.Timeout("All Overpass servers timed out")
             response.raise_for_status()
-            # Check if response is empty or too short before parsing JSON
             txt = response.text.strip() if response.text else ""
             if not txt or len(txt) < 10:
                 raise ValueError(f"Empty or too short response from Overpass API (status {response.status_code}, length={len(txt)})")

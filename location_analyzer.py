@@ -803,7 +803,7 @@ class LocationAnalyzer:
             results_map = {}
             for i in range(len(locations_chunk)):
                 original_idx = start_index + i
-                results_map[original_idx] = {"population": None, "confidence": "API Error"}
+                results_map[original_idx] = {"population": None, "confidence": "API Error", "local_names": []}
             return results_map
 
         parsed_results_map = {}
@@ -848,39 +848,57 @@ class LocationAnalyzer:
                             
                     conf_value = str(confidence) if confidence in ["High", "Medium", "Low"] else None
 
+                    raw_local_names = item_data.get('local_names', [])
+                    if isinstance(raw_local_names, list):
+                        local_names = [str(n).strip() for n in raw_local_names if n and str(n).strip()]
+                    else:
+                        local_names = []
+                    if not local_names:
+                        loc_idx = original_idx - start_index
+                        if 0 <= loc_idx < len(locations_chunk):
+                            official = locations_chunk[loc_idx].get('name', '')
+                            if official:
+                                local_names = [official]
+
                     if original_idx in processed_indices:
-                         continue
+                        continue
                     parsed_results_map[original_idx] = {
-                        "population": pop_value, 
-                        "confidence": conf_value
+                        "population": pop_value,
+                        "confidence": conf_value,
+                        "local_names": local_names,
                     }
                     processed_indices.add(original_idx)
-                
+
                 except Exception as e:
                      pass
 
             for i in range(len(locations_chunk)):
                 expected_idx = start_index + i
                 if expected_idx not in parsed_results_map:
-                    parsed_results_map[expected_idx] = {"population": None, "confidence": "Missing"}
+                    official = locations_chunk[i].get('name', '')
+                    parsed_results_map[expected_idx] = {
+                        "population": None,
+                        "confidence": "Missing",
+                        "local_names": [official] if official else [],
+                    }
 
         except json.JSONDecodeError as e:
             self._log(f"Error: Failed to decode GPT JSON response: {str(e)}")
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error", "local_names": []}
         except ValueError as e:
              error_traceback = traceback.format_exc()
              self._log(f"ERROR: Error processing GPT response structure: {e}")
              self._log(f"ERROR: Full traceback:\n{error_traceback}")
              for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": "Format Error"}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "Format Error", "local_names": []}
         except Exception as e:
             self._log(f"Error during GPT response parsing: {str(e)}")
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error"}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "Parse Error", "local_names": []}
 
         return parsed_results_map
     
@@ -935,7 +953,7 @@ class LocationAnalyzer:
                         if finish_reason not in (1, 2):
                             results_map = {}
                             for i in range(len(locations_chunk)):
-                                results_map[start_index + i] = {"population": None, "confidence": ""}
+                                results_map[start_index + i] = {"population": None, "confidence": "", "local_names": []}
                             return results_map
                         # finish_reason 2 = MAX_TOKENS: try to parse partial response below; don't return yet
             
@@ -985,7 +1003,7 @@ class LocationAnalyzer:
             results_map = {}
             for i in range(len(locations_chunk)):
                 original_idx = start_index + i
-                results_map[original_idx] = {"population": None, "confidence": ""}
+                results_map[original_idx] = {"population": None, "confidence": "", "local_names": []}
             return results_map
 
         parsed_results_map = {}
@@ -1038,21 +1056,39 @@ class LocationAnalyzer:
                             
                     conf_value = str(confidence) if confidence in ["High", "Medium", "Low"] else None
 
+                    raw_local_names = item_data.get('local_names', [])
+                    if isinstance(raw_local_names, list):
+                        local_names = [str(n).strip() for n in raw_local_names if n and str(n).strip()]
+                    else:
+                        local_names = []
+                    if not local_names:
+                        loc_idx = original_idx - start_index
+                        if 0 <= loc_idx < len(locations_chunk):
+                            official = locations_chunk[loc_idx].get('name', '')
+                            if official:
+                                local_names = [official]
+
                     if original_idx in processed_indices:
-                         continue
+                        continue
                     parsed_results_map[original_idx] = {
-                        "population": pop_value, 
-                        "confidence": conf_value
+                        "population": pop_value,
+                        "confidence": conf_value,
+                        "local_names": local_names,
                     }
                     processed_indices.add(original_idx)
-                
+
                 except Exception as e:
                      pass
 
             for i in range(len(locations_chunk)):
                 expected_idx = start_index + i
                 if expected_idx not in parsed_results_map:
-                    parsed_results_map[expected_idx] = {"population": None, "confidence": ""}
+                    official = locations_chunk[i].get('name', '')
+                    parsed_results_map[expected_idx] = {
+                        "population": None,
+                        "confidence": "",
+                        "local_names": [official] if official else [],
+                    }
 
         except json.JSONDecodeError as e:
             # Log error without Streamlit UI updates (thread-safe)
@@ -1066,7 +1102,7 @@ class LocationAnalyzer:
                 print(error_msg)  # Fallback to print if Streamlit context unavailable
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": ""}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "", "local_names": []}
         except ValueError as e:
              error_traceback = traceback.format_exc()
              error_msg = f"ERROR: Error processing Gemini response structure: {e}"
@@ -1077,7 +1113,7 @@ class LocationAnalyzer:
                  print(error_msg)
              for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": ""}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "", "local_names": []}
         except Exception as e:
             error_msg = f"Error during Gemini response parsing: {str(e)}"
             error_msg += f"\nRaw response (first 1000 chars): {raw_response_content[:1000] if raw_response_content else 'EMPTY'}"
@@ -1087,7 +1123,7 @@ class LocationAnalyzer:
                 print(error_msg)
             for i in range(len(locations_chunk)):
                  original_idx = start_index + i
-                 parsed_results_map[original_idx] = {"population": None, "confidence": ""}
+                 parsed_results_map[original_idx] = {"population": None, "confidence": "", "local_names": []}
 
         return parsed_results_map
     

@@ -39,5 +39,61 @@ class TestLocalNamesPrompt(unittest.TestCase):
             "Example JSON in prompt must contain local_names key")
 
 
+class TestLocalNamesParsing(unittest.TestCase):
+
+    def setUp(self):
+        from location_analyzer import LocationAnalyzer
+        self.analyzer = LocationAnalyzer.__new__(LocationAnalyzer)
+        self.analyzer._log = lambda msg: None
+        self.analyzer.gpt_client = None
+        self.analyzer.gpt_model = "gpt-4-turbo"
+        self.analyzer.status_callback = lambda msg: None
+
+    def test_gpt_parser_extracts_local_names(self):
+        """_get_gpt_populations_batch must parse local_names from response."""
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps([
+            {
+                "index": 0,
+                "population": 52000,
+                "confidence": "High",
+                "local_names": ["Hoboken", "Hoboken NJ", "Mile Square City"]
+            }
+        ])
+
+        locations = [{"name": "Hoboken", "type": "city", "admin_hierarchy": {}}]
+
+        with patch.object(self.analyzer, 'gpt_client') as mock_client:
+            mock_client.chat.completions.create.return_value = mock_response
+            result = self.analyzer._get_gpt_populations_batch(locations, 0)
+
+        self.assertIn(0, result)
+        self.assertEqual(result[0]["population"], 52000)
+        self.assertEqual(result[0]["local_names"], ["Hoboken", "Hoboken NJ", "Mile Square City"])
+
+    def test_gpt_parser_defaults_local_names_to_official_name(self):
+        """If local_names is missing from response, fall back to [official name]."""
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = json.dumps([
+            {"index": 0, "population": 52000, "confidence": "High"}
+        ])
+
+        locations = [{"name": "Hoboken", "type": "city", "admin_hierarchy": {}}]
+
+        with patch.object(self.analyzer, 'gpt_client') as mock_client:
+            mock_client.chat.completions.create.return_value = mock_response
+            result = self.analyzer._get_gpt_populations_batch(locations, 0)
+
+        self.assertIn(0, result)
+        self.assertEqual(result[0]["local_names"], ["Hoboken"],
+            "Should fall back to official name when local_names missing")
+
+
 if __name__ == "__main__":
     unittest.main()

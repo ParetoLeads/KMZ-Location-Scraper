@@ -519,10 +519,11 @@ class LocationAnalyzer:
         DISCOVERY_TIMEOUT = 35  # Fail fast to free slots; avoid 70s hold
 
         def _execute_query() -> Dict[str, Any]:
+            query_stripped = query.strip()
             try:
                 response = requests.post(
                     self.overpass_url,
-                    data={"data": query},
+                    data={"data": query_stripped},
                     timeout=DISCOVERY_TIMEOUT,
                     headers=OSM_HEADERS,
                 )
@@ -533,7 +534,7 @@ class LocationAnalyzer:
                     try:
                         response = requests.post(
                             fallback_url,
-                            data={"data": query},
+                            data={"data": query_stripped},
                             timeout=DISCOVERY_TIMEOUT,
                             headers=OSM_HEADERS,
                         )
@@ -670,10 +671,11 @@ class LocationAnalyzer:
         def _execute_hierarchy_query() -> Dict[str, Any]:
             """Execute the hierarchy query; on primary timeout try fallback Overpass once."""
             self._log(f"[Overpass] POST start url={self.overpass_url} timeout={timeout + buffer}s")
+            query_stripped = query.strip()
             try:
                 response = requests.post(
                     self.overpass_url,
-                    data={"data": query},
+                    data={"data": query_stripped},
                     timeout=timeout + buffer,
                     headers=OSM_HEADERS,
                 )
@@ -681,7 +683,7 @@ class LocationAnalyzer:
                 self._log("[Overpass] Primary timeout, trying fallback overpass-api.de")
                 response = requests.post(
                     OVERPASS_FALLBACK_URL,
-                    data={"data": query},
+                    data={"data": query_stripped},
                     timeout=timeout + buffer,
                     headers=OSM_HEADERS,
                 )

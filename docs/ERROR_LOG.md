@@ -40,13 +40,17 @@ Same pattern repeats for `additional` and `special` queries.
 
 ---
 
-### Fix Attempt 4 — IN PROGRESS
+### Fix Attempt 4 — DEPLOYED, UNTESTED (app still running old build at test time)
 **Root cause identified**: The fallback loop in `_execute_query` (location_analyzer.py ~line 521) uses `break` after any non-timeout POST response. When `overpass-api.de` returns 406, the loop exits immediately — `openstreetmap.ru` is never tried. The 406 then gets re-raised, retried 3 times, and all 3 attempts fail identically.
 
-**Fix**:
+**Fix (commit e7468f5)**:
 - Change fallback loop to only `break` on a 2xx response
 - On non-2xx (e.g. 406), log and continue to the next fallback URL
 - Apply same fix to hierarchy query (`_execute_hierarchy_query`), which only falls back to one URL anyway
 - Improve User-Agent header to include contact info (Overpass policy)
 
-**Files changed**: `location_analyzer.py`
+**Second run showed old log messages** (`"Primary timeout, trying fallback"`) — Streamlit Cloud had not yet redeployed at time of test. Suspected cause: Streamlit Cloud IP range blocked by overpass-api.de (common with AWS/GCP shared IPs).
+
+**Fix Attempt 4b — additional mirrors added**:
+- Added `https://overpass.private.coffee/api/interpreter` and `https://maps.mail.ru/osm/tools/overpass/api/interpreter` to `OVERPASS_FALLBACK_URLS`
+- Now tries 4 mirrors total before giving up

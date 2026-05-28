@@ -515,11 +515,12 @@ class LocationAnalyzer:
             return cached_result
         
         # Execute query with retry logic
-        OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0"}
+        OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0 (office@paretoleads.com)", "Accept": "*/*"}
         DISCOVERY_TIMEOUT = 35  # Fail fast to free slots; avoid 70s hold
 
         def _execute_query() -> Dict[str, Any]:
             query_stripped = query.strip()
+            response = None
             try:
                 response = requests.post(
                     self.overpass_url,
@@ -527,19 +528,28 @@ class LocationAnalyzer:
                     timeout=DISCOVERY_TIMEOUT,
                     headers=OSM_HEADERS,
                 )
+                if not response.ok:
+                    self._log(f"{query_type} query: Primary returned HTTP {response.status_code}, trying fallbacks")
+                    response = None
+                    raise requests.exceptions.Timeout("Primary non-2xx, try fallbacks")
             except requests.exceptions.Timeout:
                 response = None
                 for fallback_url in OVERPASS_FALLBACK_URLS:
-                    self._log(f"{query_type} query: Primary timeout, trying fallback {fallback_url}")
+                    self._log(f"{query_type} query: Trying fallback {fallback_url}")
                     try:
-                        response = requests.post(
+                        fb_response = requests.post(
                             fallback_url,
                             data={"data": query_stripped},
                             timeout=DISCOVERY_TIMEOUT,
                             headers=OSM_HEADERS,
                         )
-                        break
+                        if fb_response.ok:
+                            response = fb_response
+                            break
+                        self._log(f"{query_type} query: Fallback {fallback_url} returned HTTP {fb_response.status_code}, trying next...")
+                        response = fb_response  # keep last non-ok for raise_for_status
                     except requests.exceptions.Timeout:
+                        self._log(f"{query_type} query: Fallback {fallback_url} timed out, trying next...")
                         continue
                 if response is None:
                     raise requests.exceptions.Timeout("All Overpass servers timed out")
@@ -666,12 +676,13 @@ class LocationAnalyzer:
         else:
             buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
 
-        OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0"}
+        OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0 (office@paretoleads.com)", "Accept": "*/*"}
 
         def _execute_hierarchy_query() -> Dict[str, Any]:
-            """Execute the hierarchy query; on primary timeout try fallback Overpass once."""
+            """Execute the hierarchy query; on primary timeout or error try all fallback mirrors."""
             self._log(f"[Overpass] POST start url={self.overpass_url} timeout={timeout + buffer}s")
             query_stripped = query.strip()
+            response = None
             try:
                 response = requests.post(
                     self.overpass_url,
@@ -679,14 +690,31 @@ class LocationAnalyzer:
                     timeout=timeout + buffer,
                     headers=OSM_HEADERS,
                 )
+                if not response.ok:
+                    self._log(f"[Overpass] Primary returned HTTP {response.status_code}, trying fallbacks")
+                    response = None
+                    raise requests.exceptions.Timeout("Primary non-2xx, try fallbacks")
             except requests.exceptions.Timeout:
-                self._log("[Overpass] Primary timeout, trying fallback overpass-api.de")
-                response = requests.post(
-                    OVERPASS_FALLBACK_URL,
-                    data={"data": query_stripped},
-                    timeout=timeout + buffer,
-                    headers=OSM_HEADERS,
-                )
+                response = None
+                for fallback_url in OVERPASS_FALLBACK_URLS:
+                    self._log(f"[Overpass] Trying fallback {fallback_url}")
+                    try:
+                        fb_response = requests.post(
+                            fallback_url,
+                            data={"data": query_stripped},
+                            timeout=timeout + buffer,
+                            headers=OSM_HEADERS,
+                        )
+                        if fb_response.ok:
+                            response = fb_response
+                            break
+                        self._log(f"[Overpass] Fallback {fallback_url} returned HTTP {fb_response.status_code}, trying next...")
+                        response = fb_response
+                    except requests.exceptions.Timeout:
+                        self._log(f"[Overpass] Fallback {fallback_url} timed out, trying next...")
+                        continue
+                if response is None:
+                    raise requests.exceptions.Timeout("All Overpass servers timed out")
             self._log(f"[Overpass] POST done status={response.status_code}")
             response.raise_for_status()
             txt = response.text.strip() if response.text else ""

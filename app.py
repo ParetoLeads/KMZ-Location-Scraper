@@ -50,7 +50,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Title
-st.markdown('<h1 class="main-header">🗺️ KMZ Location Scraper</h1>', unsafe_allow_html=True)
+st.markdown(f'<h1 class="main-header">🗺️ KMZ Location Scraper <span style="font-size:0.45em; font-weight:normal; color:#888; vertical-align:middle;">v{config.APP_VERSION}</span></h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header" style="text-align: center;">Extract locations from KMZ files and estimate populations using OpenStreetMap and GPT</p>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: #666; font-size: 0.85rem; margin-top: -0.5rem;">Developed with 💡 by Paretoleads.com</p>', unsafe_allow_html=True)
 

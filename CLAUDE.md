@@ -39,6 +39,11 @@ See `docs/ERROR_LOG.md` for full history. Short version:
 - Success = Stage 2 logs "Total unique OSM locations found: N" where N > 0
 - Failure = all stages complete but "No locations to save" in Stage 5
 
+## Version tracking
+- `config.APP_VERSION` in `config.py` is displayed in the app title as `v1.0.x`
+- **Bump this version on every deploy** so the user can confirm Streamlit Cloud picked up new code
+- Use patch version (1.0.x) for bug fixes, minor version (1.x.0) for new features
+
 ## Running locally
 ```
 pip install -r requirements.txt

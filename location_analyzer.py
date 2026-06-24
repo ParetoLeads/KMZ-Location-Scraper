@@ -1659,15 +1659,7 @@ class LocationAnalyzer:
 
             if self.max_locations > 0 and len(all_locations) > self.max_locations:
                 self._log(f"\nLimiting results to {self.max_locations} locations (out of {len(all_locations)} found)")
-                prioritized = []
-                prioritized.extend(primary_locations)
-                remaining = self.max_locations - len(prioritized)
-                if remaining > 0: prioritized.extend(additional_places[:remaining])
-                remaining = self.max_locations - len(prioritized)
-                if remaining > 0: prioritized.extend(special_locations[:remaining])
-                remaining = self.max_locations - len(prioritized)
-                if remaining > 0: prioritized.extend(administrative_areas[:remaining])
-                all_locations = prioritized[:self.max_locations]
+                all_locations = all_locations[:self.max_locations]
                 self._log(f"Processing {len(all_locations)} locations after limiting.")
 
             # CHECKPOINT: Stage 4 - Population Estimation

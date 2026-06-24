@@ -6,6 +6,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Tuple, Optional, Callable, Any
 import time
+import concurrent.futures
 from datetime import datetime
 from openai import OpenAI
 from math import ceil
@@ -387,11 +388,9 @@ class LocationAnalyzer:
           way["place"~"{place_types_pattern}"]({min_lat},{min_lon},{max_lat},{max_lon});
           relation["place"~"{place_types_pattern}"]({min_lat},{min_lon},{max_lat},{max_lon});
         );
-        out body;
-        >;
-        out skel qt;
+        out center;
         """
-    
+
     def _create_primary_osm_query(self, min_lat, min_lon, max_lat, max_lon):
         """Create query for primary locations."""
         return self._create_osm_query(min_lat, min_lon, max_lat, max_lon, self.primary_types_pattern)
@@ -399,6 +398,11 @@ class LocationAnalyzer:
     def _create_additional_osm_query(self, min_lat, min_lon, max_lat, max_lon):
         """Create query for additional places."""
         return self._create_osm_query(min_lat, min_lon, max_lat, max_lon, self.additional_types_pattern)
+
+    def _create_combined_place_query(self, min_lat, min_lon, max_lat, max_lon):
+        """Merge primary + additional place queries into one Overpass request."""
+        combined_pattern = "|".join(self.primary_place_types + self.additional_place_types)
+        return self._create_osm_query(min_lat, min_lon, max_lat, max_lon, combined_pattern)
 
     def _create_special_osm_query(self, min_lat, min_lon, max_lat, max_lon):
         """Create query for special locations (light: centroids only, max 200)."""
@@ -505,6 +509,8 @@ class LocationAnalyzer:
             query = self._create_primary_osm_query(min_lat, min_lon, max_lat, max_lon)
         elif query_type == "additional":
             query = self._create_additional_osm_query(min_lat, min_lon, max_lat, max_lon)
+        elif query_type == "combined_place":
+            query = self._create_combined_place_query(min_lat, min_lon, max_lat, max_lon)
         elif query_type == "special":
             query = self._create_special_osm_query(min_lat, min_lon, max_lat, max_lon)
         else:
@@ -1355,9 +1361,11 @@ class LocationAnalyzer:
         gpt_results_map = {}
         gemini_results_map = {}
         if use_openai and use_gemini:
-            # Sequential: GPT first, then Gemini. Ensures Gemini rate-limit spacing (e.g. 5 RPM) is enforceable between batches.
-            gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
-            gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                gpt_future = executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)
+                gemini_future = executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)
+                gpt_results_map = gpt_future.result()
+                gemini_results_map = gemini_future.result()
         else:
             if use_openai:
                 gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
@@ -1577,17 +1585,13 @@ class LocationAnalyzer:
             self._log("CHECKPOINT: Stage 1 - Parsing KMZ boundary file completed")
             self._log("CHECKPOINT: Stage 2 - Finding OSM locations started")
             self._log("\n--- Finding OSM Locations ---")
-            primary_locations = self._find_osm_locations(self.polygon_points, "primary", self.primary_place_types)
+            combined_place_types = self.primary_place_types + self.additional_place_types
+            place_locations = self._find_osm_locations(self.polygon_points, "combined_place", combined_place_types)
             time.sleep(config.OSM_QUERY_DELAY)
-            additional_places = []
-            if self.additional_place_types:
-                additional_places = self._find_osm_locations(self.polygon_points, "additional", self.additional_place_types)
-                time.sleep(config.OSM_QUERY_DELAY)
             special_locations = []
             if self.special_place_types:
                 special_locations = self._find_osm_locations(self.polygon_points, "special", self.special_place_types)
-            administrative_areas = []
-            all_locations = primary_locations + additional_places + special_locations + administrative_areas
+            all_locations = place_locations + special_locations
             all_locations = self.clean_and_deduplicate_locations(all_locations)
             self._log("CHECKPOINT: Stage 2 - Finding OSM locations completed")
             self._log(f"\n--- OSM Location Summary ---")
@@ -1611,21 +1615,15 @@ class LocationAnalyzer:
             # CHECKPOINT: Stage 2 - Finding OSM Locations
             self._log("CHECKPOINT: Stage 2 - Finding OSM locations started")
             self._log("\n--- Finding OSM Locations ---")
-            primary_locations = self._find_osm_locations(self.polygon_points, "primary", self.primary_place_types)
-            time.sleep(config.OSM_QUERY_DELAY)  # Delay between query types to avoid rate limiting
-            
-            additional_places = []
-            if self.additional_place_types:
-                additional_places = self._find_osm_locations(self.polygon_points, "additional", self.additional_place_types)
-                time.sleep(config.OSM_QUERY_DELAY)  # Delay between query types
-            
+            combined_place_types = self.primary_place_types + self.additional_place_types
+            place_locations = self._find_osm_locations(self.polygon_points, "combined_place", combined_place_types)
+            time.sleep(config.OSM_QUERY_DELAY)
+
             special_locations = []
-            if self.special_place_types: 
+            if self.special_place_types:
                 special_locations = self._find_osm_locations(self.polygon_points, "special", self.special_place_types)
-            
-            administrative_areas = [] 
-            
-            all_locations = primary_locations + additional_places + special_locations + administrative_areas
+
+            all_locations = place_locations + special_locations
             all_locations = self.clean_and_deduplicate_locations(all_locations)
             self._log("CHECKPOINT: Stage 2 - Finding OSM locations completed")
             

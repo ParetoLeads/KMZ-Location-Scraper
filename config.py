@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.4"
+    APP_VERSION: str = "1.0.5"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [
@@ -45,10 +45,10 @@ class Config:
     
     # Processing Settings
     DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '30'))
-    DEFAULT_BATCH_SIZE: int = 5   # For hierarchy (Overpass); larger batches = fewer round-trips
-    HIERARCHY_FIRST_BATCH_SIZE: int = 3   # First hierarchy batch size
-    HIERARCHY_QUERY_TIMEOUT: int = 20   # 20+2=22s; gives Overpass time to respond
-    HIERARCHY_TIMEOUT_BUFFER: int = 2   # Added to timeout for hierarchy request only
+    DEFAULT_BATCH_SIZE: int = 10   # For hierarchy (Overpass); larger batches = fewer round-trips
+    HIERARCHY_FIRST_BATCH_SIZE: int = 5   # First hierarchy batch size (fail-fast probe)
+    HIERARCHY_QUERY_TIMEOUT: int = 20   # query-level timeout; HTTP timeout = this + HIERARCHY_TIMEOUT_BUFFER
+    HIERARCHY_TIMEOUT_BUFFER: int = 10   # Buffer so HTTP client doesn't close before server responds
     HIERARCHY_MAX_RETRIES_CHUNKED: int = 2   # One retry before deferring to retry stage
     DEFAULT_MAX_LOCATIONS: int = int(os.getenv('DEFAULT_MAX_LOCATIONS', '0'))  # 0 = no limit
     DEFAULT_PAUSE_BEFORE_GPT: bool = False

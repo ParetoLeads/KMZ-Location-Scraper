@@ -3,7 +3,7 @@ import json
 import uuid
 import threading
 import tempfile
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response
 from sse_starlette.sse import EventSourceResponse
 from server.job_store import create_job, get_job, append_event, list_completed_jobs
@@ -11,7 +11,7 @@ from server.job_store import create_job, get_job, append_event, list_completed_j
 router = APIRouter()
 
 
-def _run_analysis(job_id: str, kmz_path: str, filename: str = ""):
+def _run_analysis(job_id: str, kmz_path: str, filename: str = "", min_population: int = 10000):
     from location_analyzer import LocationAnalyzer
     from config import config
 
@@ -47,7 +47,7 @@ def _run_analysis(job_id: str, kmz_path: str, filename: str = ""):
         import time as _time
         locations = analyzer.run()
         if locations:
-            excel_bio = analyzer.save_to_excel(locations)
+            excel_bio = analyzer.save_to_excel(locations, min_population=min_population)
             job.result_excel = excel_bio.getvalue() if excel_bio else None
         else:
             job.result_excel = None
@@ -69,14 +69,14 @@ def _run_analysis(job_id: str, kmz_path: str, filename: str = ""):
 
 
 @router.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), min_population: int = Form(10000)):
     job_id = str(uuid.uuid4())
     original_name = file.filename or "unknown.kmz"
     create_job(job_id, filename=original_name)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as f:
         f.write(await file.read())
         kmz_path = f.name
-    thread = threading.Thread(target=_run_analysis, args=(job_id, kmz_path, original_name), daemon=True)
+    thread = threading.Thread(target=_run_analysis, args=(job_id, kmz_path, original_name, min_population), daemon=True)
     thread.start()
     return {"job_id": job_id, "filename": original_name}
 

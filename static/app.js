@@ -1,7 +1,5 @@
 let currentJobId = null;
 let currentFilename = null;
-let map = null;
-let allLocations = [];
 let timerInterval = null;
 let jobStartTime = null;
 
@@ -17,7 +15,6 @@ function saveLocalRun(run) {
   const idx = runs.findIndex(r => r.job_id === run.job_id);
   if (idx >= 0) runs[idx] = { ...runs[idx], ...run };
   else runs.unshift(run);
-  // Keep at most 50 runs
   if (runs.length > 50) runs.splice(50);
   try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs)); } catch {}
 }
@@ -37,14 +34,12 @@ async function renderRunsTable() {
     return;
   }
 
-  // Check which job IDs the server still has (for download availability)
   let serverIds = new Set();
   try {
     const res = await fetch("/api/runs");
     if (res.ok) {
       const data = await res.json();
       (data.runs || []).forEach(r => serverIds.add(r.job_id));
-      // Merge server location counts into local runs
       const serverMap = {};
       (data.runs || []).forEach(r => { serverMap[r.job_id] = r; });
       localRuns = localRuns.map(r => serverMap[r.job_id] ? { ...r, ...serverMap[r.job_id] } : r);
@@ -83,9 +78,8 @@ const uploadArea   = document.getElementById("upload-area");
 const fileNameEl   = document.getElementById("file-name");
 const progressSection = document.getElementById("progress-section");
 const logEl        = document.getElementById("log");
-const resultsSection = document.getElementById("results-section");
 const downloadBtn  = document.getElementById("download-btn");
-const searchInput  = document.getElementById("search-input");
+const popThreshold = document.getElementById("pop-threshold");
 
 // ── Stage tracker ──────────────────────────────────────────────
 const STAGE_MAP = {
@@ -108,7 +102,6 @@ function setStage(num, done) {
   if (!el) return;
   el.classList.remove("active", "done");
   el.classList.add(done ? "done" : "active");
-  // Mark all prior stages done
   if (done) {
     for (let i = 1; i < num; i++) {
       const prev = document.getElementById("stage-" + i);
@@ -190,11 +183,10 @@ startBtn.addEventListener("click", async () => {
   const file = fileInput.files[0];
   if (!file) return;
   startBtn.disabled = true;
-  resultsSection.style.display = "none";
+  downloadBtn.style.display = "none";
   progressSection.style.display = "block";
   logEl.innerHTML = "";
 
-  // Reset stage tracker
   for (let i = 1; i <= 5; i++) {
     const el = document.getElementById("stage-" + i);
     if (el) el.classList.remove("active", "done");
@@ -204,6 +196,8 @@ startBtn.addEventListener("click", async () => {
 
   const form = new FormData();
   form.append("file", file);
+  form.append("min_population", popThreshold ? popThreshold.value : "10000");
+
   let res;
   try {
     res = await fetch("/api/upload", { method: "POST", body: form });
@@ -220,7 +214,6 @@ startBtn.addEventListener("click", async () => {
   const data = await res.json();
   currentJobId = data.job_id;
   currentFilename = data.filename || file.name;
-  // Save stub to localStorage so it appears immediately
   saveLocalRun({ job_id: data.job_id, filename: currentFilename, completed_at: null, location_count: null });
   renderRunsTable();
   startTimer();
@@ -236,7 +229,7 @@ function streamProgress(jobId) {
     if (done) return;
     es = new EventSource("/api/stream/" + jobId);
 
-    es.addEventListener("ping", () => {}); // keepalive — ignore
+    es.addEventListener("ping", () => {});
 
     es.addEventListener("progress", e => {
       const msg = e.data;
@@ -271,15 +264,15 @@ function streamProgress(jobId) {
         has_excel: (info.location_count || 0) > 0,
       });
       renderRunsTable();
+      if ((info.location_count || 0) > 0) {
+        downloadBtn.style.display = "inline-flex";
+        downloadBtn.onclick = () => { window.location.href = "/api/download/" + jobId; };
+      }
       es.close();
-      fetchAndShowResults(jobId);
       startBtn.disabled = false;
     });
 
     es.addEventListener("error", e => {
-      // Only handle server-sent error events that carry a data payload.
-      // Plain connection drops also fire this event but with e.data undefined —
-      // those are handled by es.onerror below (reconnect logic).
       if (!e.data) return;
       done = true;
       stopTimer();
@@ -289,7 +282,6 @@ function streamProgress(jobId) {
     });
 
     es.onerror = () => {
-      // Connection drop — auto-reconnect after 3s
       es.close();
       if (!done) {
         log("⚠ Connection dropped, reconnecting…");
@@ -300,95 +292,6 @@ function streamProgress(jobId) {
 
   connect();
 }
-
-// ── Results ────────────────────────────────────────────────────
-async function fetchAndShowResults(jobId) {
-  downloadBtn.style.display = "inline-flex";
-  downloadBtn.onclick = () => { window.location.href = "/api/download/" + jobId; };
-
-  let data;
-  try {
-    const res = await fetch("/api/locations/" + jobId);
-    data = await res.json();
-  } catch (err) {
-    log("Could not load location data: " + err.message);
-    return;
-  }
-
-  allLocations = data.locations || [];
-  renderResults(allLocations);
-  resultsSection.style.display = "block";
-  resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-function renderResults(locs) {
-  const withPop  = locs.filter(l => l.combined_population).length;
-  const over10k  = locs.filter(l => (l.combined_population || 0) > 10000).length;
-  document.getElementById("stat-total").textContent   = locs.length;
-  document.getElementById("stat-with-pop").textContent = withPop;
-  document.getElementById("stat-over-10k").textContent = over10k;
-  renderMap(locs);
-  renderTable(locs);
-}
-
-function renderMap(locs) {
-  if (map) { map.remove(); map = null; }
-  const valid = locs.filter(l => l.latitude && l.longitude);
-  if (!valid.length) return;
-
-  const lat = valid.reduce((s, l) => s + l.latitude, 0) / valid.length;
-  const lon = valid.reduce((s, l) => s + l.longitude, 0) / valid.length;
-  map = L.map("map").setView([lat, lon], 9);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a>"
-  }).addTo(map);
-
-  valid.forEach(l => {
-    const h   = l.admin_hierarchy || {};
-    const pop = l.combined_population ? Number(l.combined_population).toLocaleString() : "—";
-    const loc = [h.level_8_name, h.level_6_name, h.level_4_name].filter(Boolean).join(", ") || "";
-    L.circleMarker([l.latitude, l.longitude], {
-      radius: 6, color: "#F26522", fillColor: "#F26522", fillOpacity: 0.75, weight: 1.5
-    }).bindPopup(
-      "<b>" + (l.name || "—") + "</b>" +
-      (loc ? "<br/><span style='color:#6B7280;font-size:0.85em'>" + loc + "</span>" : "") +
-      "<br/>Pop: " + pop
-    ).addTo(map);
-  });
-}
-
-function renderTable(locs) {
-  const tbody = document.getElementById("results-body");
-  tbody.innerHTML = "";
-
-  const fmt = n => (n != null && n !== "" && !isNaN(n)) ? Number(n).toLocaleString() : "—";
-
-  locs.forEach(l => {
-    const h    = l.admin_hierarchy || {};
-    const conf = (l.combined_confidence || "").trim();
-    const badgeClass = conf === "High" ? "b-high" : conf === "Medium" ? "b-medium" : conf === "Low" ? "b-low" : "";
-    const typeClass = "b-type";
-    const names = Array.isArray(l.local_names) ? l.local_names.join(", ") : (l.local_names || "");
-
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      "<td><strong>" + esc(l.name) + "</strong></td>" +
-      "<td><span class='badge " + typeClass + "'>" + esc(l.type) + "</span></td>" +
-      "<td>" + esc(h.level_8_name || "—") + "</td>" +
-      "<td>" + esc(h.level_6_name || "—") + "</td>" +
-      "<td>" + esc(h.level_4_name || "—") + "</td>" +
-      "<td><strong>" + fmt(l.combined_population) + "</strong></td>" +
-      "<td>" + (badgeClass ? "<span class='badge " + badgeClass + "'>" + esc(conf) + "</span>" : "—") + "</td>" +
-      "<td class='local-names'>" + esc(names) + "</td>";
-    tbody.appendChild(tr);
-  });
-}
-
-// ── Search ─────────────────────────────────────────────────────
-searchInput.addEventListener("input", () => {
-  const term = searchInput.value.toLowerCase();
-  renderTable(term ? allLocations.filter(l => (l.name || "").toLowerCase().includes(term)) : allLocations);
-});
 
 // ── Init ───────────────────────────────────────────────────────
 renderRunsTable();

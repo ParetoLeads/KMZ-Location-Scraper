@@ -1474,7 +1474,7 @@ class LocationAnalyzer:
         
         return combined_pop, combined_conf
     
-    def save_to_excel(self, all_locations=None, filename=None) -> BytesIO:
+    def save_to_excel(self, all_locations=None, filename=None, min_population=None) -> BytesIO:
         """Save final analysis results to Excel with 2 sheets: Full Data and Clean Data."""
         if all_locations is None or not all_locations:
             self._log("No locations to save.")
@@ -1556,9 +1556,10 @@ class LocationAnalyzer:
             df_clean.columns = clean_col_names
             
             # Filter to only locations with population > threshold
+            _pop_threshold = min_population if min_population is not None else config.MIN_POPULATION_FOR_CLEAN_DATA
             df_clean = df_clean[
-                df_clean['Population'].notna() & 
-                (df_clean['Population'] > config.MIN_POPULATION_FOR_CLEAN_DATA)
+                df_clean['Population'].notna() &
+                (df_clean['Population'] > _pop_threshold)
             ].copy()
             
             # Sort by population descending
@@ -1579,7 +1580,7 @@ class LocationAnalyzer:
             self._log(f"\nSaved {len(all_locations)} locations to Excel file.")
             self._log(
                 f"Clean Data sheet contains {len(df_clean)} locations with population > "
-                f"{config.MIN_POPULATION_FOR_CLEAN_DATA:,}."
+                f"{_pop_threshold:,}."
             )
             self._log(f"CHECKPOINT: Excel export completed successfully in {excel_elapsed:.1f} seconds")
             return output

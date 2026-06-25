@@ -54,8 +54,8 @@ def _run_analysis(job_id: str, kmz_path: str):
         job.status = "complete"
         append_event(job_id, {"type": "complete", "data": json.dumps({"location_count": len(job.locations)})})
     except Exception as e:
-        job.status = "error"
         append_event(job_id, {"type": "error", "data": str(e)})
+        job.status = "error"
     finally:
         try:
             os.unlink(kmz_path)
@@ -91,15 +91,22 @@ async def stream(job_id: str):
 
     async def event_generator():
         import asyncio
+        import time as _time
         sent = 0
+        last_sent_ts = _time.monotonic()
+        PING_INTERVAL = 15  # seconds — keeps Railway/nginx proxy from dropping idle SSE connections
         while True:
             events = job.events
             while sent < len(events):
                 e = events[sent]
                 yield {"event": e["type"], "data": e["data"]}
                 sent += 1
-            if job.status in ("complete", "error"):
+                last_sent_ts = _time.monotonic()
+            if job.status in ("complete", "error") and sent >= len(job.events):
                 break
+            if _time.monotonic() - last_sent_ts >= PING_INTERVAL:
+                yield {"event": "ping", "data": "keep-alive"}
+                last_sent_ts = _time.monotonic()
             await asyncio.sleep(0.5)
 
     return EventSourceResponse(event_generator())

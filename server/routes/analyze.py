@@ -24,6 +24,8 @@ def _run_analysis(job_id: str, kmz_path: str):
     def on_progress(msg: str):
         append_event(job_id, {"type": "progress", "data": str(msg)})
 
+    on_progress(f"[API keys] OPENAI_API_KEY={'set (' + str(len(openai_key)) + ' chars)' if openai_key else 'NOT SET'} | GEMINI_API_KEY={'set (' + str(len(gemini_key)) + ' chars)' if gemini_key else 'NOT SET'}")
+
     try:
         analyzer = LocationAnalyzer(
             kmz_file=kmz_path,

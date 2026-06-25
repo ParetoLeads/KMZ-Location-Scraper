@@ -745,6 +745,166 @@ class LocationAnalyzer:
             self._log(f"Failed to fetch hierarchy: {str(e)}")
             raise
     
+    def fetch_admin_hierarchy_bbox(self, all_locations: List[Dict]) -> List[Dict]:
+        """
+        Alternative Stage 3 implementation: fetch ALL admin boundaries in ONE
+        bounding-box Overpass query, then assign hierarchy via local point-in-polygon.
+
+        Does NOT modify fetch_admin_hierarchy_batch — the two methods are completely
+        independent and can be compared via HIERARCHY_METHOD='compare'.
+        """
+        import time as _t
+        from shapely.geometry import Point, LineString
+        from shapely.ops import polygonize, unary_union
+
+        start_time = _t.time()
+
+        valid_locs = [
+            (loc, loc['latitude'], loc['longitude'])
+            for loc in all_locations
+            if loc.get('latitude') is not None and loc.get('longitude') is not None
+        ]
+        if not valid_locs:
+            return all_locations
+
+        lats = [lat for _, lat, _ in valid_locs]
+        lons = [lon for _, _, lon in valid_locs]
+        BUF = 0.1  # ~10 km buffer around the cluster
+        min_lat, max_lat = min(lats) - BUF, max(lats) + BUF
+        min_lon, max_lon = min(lons) - BUF, max(lons) + BUF
+
+        self._log(
+            f"[BBox] Querying admin boundaries "
+            f"({min_lat:.3f},{min_lon:.3f} → {max_lat:.3f},{max_lon:.3f})"
+        )
+
+        # Levels 4/6/8 — skip level 2 (country) to avoid huge geometry downloads
+        query = (
+            f"[out:json][timeout:120];\n"
+            f"(\n"
+            f'  relation["boundary"="administrative"]["admin_level"~"^(4|6|8)$"]'
+            f"({min_lat},{min_lon},{max_lat},{max_lon});\n"
+            f");\n"
+            f"out geom;"
+        )
+
+        OSM_HEADERS = {
+            "User-Agent": "KMZ-Location-Scraper/1.0 (office@paretoleads.com)",
+            "Accept": "*/*",
+        }
+
+        # --- Execute query (primary + fallback chain) ---
+        response = None
+        for url in [self.overpass_url] + OVERPASS_FALLBACK_URLS:
+            try:
+                r = requests.post(
+                    url, data={"data": query.strip()}, timeout=130, headers=OSM_HEADERS
+                )
+                if r.ok:
+                    response = r
+                    self._log(f"[BBox] Got response from {url} (HTTP {r.status_code})")
+                    break
+                self._log(f"[BBox] {url} returned HTTP {r.status_code}, trying next…")
+            except Exception as exc:
+                self._log(f"[BBox] {url} error: {exc}, trying next…")
+
+        if response is None:
+            self._log("[BBox] All Overpass servers failed — bbox approach aborted")
+            return all_locations
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            self._log(f"[BBox] Failed to parse JSON response: {exc}")
+            return all_locations
+
+        query_time = _t.time() - start_time
+        elements = data.get("elements", [])
+        self._log(f"[BBox] Received {len(elements)} relations in {query_time:.1f}s")
+
+        # --- Parse relations into shapely polygons ---
+        boundaries = []  # (shapely_geom, admin_level_int, name)
+        parse_errors = 0
+
+        for element in elements:
+            if element.get("type") != "relation":
+                continue
+            tags = element.get("tags", {})
+            name = tags.get("name") or tags.get("name:en")
+            level_str = tags.get("admin_level")
+            if not name or not level_str:
+                continue
+            try:
+                level = int(level_str)
+            except ValueError:
+                continue
+
+            outer_ways = []
+            for member in element.get("members", []):
+                if member.get("role") == "outer" and member.get("geometry"):
+                    coords = [(g["lon"], g["lat"]) for g in member["geometry"]]
+                    if len(coords) >= 2:
+                        outer_ways.append(coords)
+
+            if not outer_ways:
+                parse_errors += 1
+                continue
+
+            try:
+                lines = [LineString(c) for c in outer_ways]
+                polys = list(polygonize(lines))
+                if polys:
+                    geom = unary_union(polys)
+                    boundaries.append((geom, level, name))
+                else:
+                    parse_errors += 1
+            except Exception:
+                parse_errors += 1
+
+        if parse_errors:
+            self._log(f"[BBox] {parse_errors} relations skipped (geometry errors)")
+        self._log(f"[BBox] Built {len(boundaries)} valid boundary polygons")
+
+        # --- Point-in-polygon lookup for every location ---
+        assigned = 0
+        for loc, lat, lon in valid_locs:
+            point = Point(lon, lat)  # shapely: (x=lon, y=lat)
+            found = {}
+            for geom, level, name in boundaries:
+                try:
+                    if level not in found and geom.contains(point):
+                        found[level] = name
+                except Exception:
+                    continue
+
+            hierarchy = {f"level_{lvl}_name": None for lvl in config.ADMIN_LEVELS}
+            hierarchy["containing_level"] = None
+            hierarchy["parent_level"] = None
+            hierarchy["parent_name"] = None
+
+            for level, name in found.items():
+                key = f"level_{level}_name"
+                if key in hierarchy:
+                    hierarchy[key] = name
+
+            sorted_levels = sorted(found.keys(), reverse=True)
+            if sorted_levels:
+                hierarchy["containing_level"] = sorted_levels[0]
+                if len(sorted_levels) > 1:
+                    hierarchy["parent_level"] = sorted_levels[1]
+                    hierarchy["parent_name"] = found[sorted_levels[1]]
+
+            if found:
+                assigned += 1
+            loc["admin_hierarchy"] = hierarchy
+
+        elapsed = _t.time() - start_time
+        self._log(
+            f"[BBox] Assigned hierarchy to {assigned}/{len(valid_locs)} locations "
+            f"in {elapsed:.1f}s total"
+        )
+        return all_locations
+
     def _get_osm_population(self, location):
         """Get population from OpenStreetMap tags if available."""
         try:
@@ -1651,23 +1811,92 @@ class LocationAnalyzer:
             # CHECKPOINT: Stage 3 - Administrative Boundaries
             self._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries started")
             self._log("\n--- Retrieving Administrative Boundaries ---")
-            # Batch size for hierarchy queries
-            batch_size = config.DEFAULT_BATCH_SIZE
-            total_batches = (len(all_locations) + batch_size - 1) // batch_size
-            hierarchy_completed = 0
-            for i in range(0, len(all_locations), batch_size):
-                batch = all_locations[i:i + batch_size]
-                batch_num = (i // batch_size) + 1
-                self._log(f"  Retrieving hierarchy batch {batch_num}/{total_batches} ({len(batch)} locations)...")
-                self.fetch_admin_hierarchy_batch(batch, timeout_sec=config.HIERARCHY_QUERY_TIMEOUT)
-                hierarchy_completed = batch_num
-                # Update estimate after each batch
-                estimated_time = self._estimate_processing_time(len(all_locations), hierarchy_completed, 0)
-                self._log(f"Estimated remaining time: {estimated_time}")
-                # Add delay between batches to avoid rate limiting
-                if i + batch_size < len(all_locations):  # Don't delay after last batch
-                    time.sleep(config.HIERARCHY_BATCH_DELAY)  # Delay between batches for rate limit safety
-            
+
+            hierarchy_method = getattr(config, 'HIERARCHY_METHOD', 'batch')
+
+            if hierarchy_method == 'compare':
+                # ── A/B compare: run both approaches on deep copies, apply batch to real data ──
+                import copy as _copy
+                import time as _t
+
+                locs_batch = _copy.deepcopy(all_locations)
+                locs_bbox  = _copy.deepcopy(all_locations)
+
+                # --- Approach A: batch (existing) ---
+                self._log("[A/B] Running BATCH approach…")
+                t0 = _t.time()
+                _batch_size = config.DEFAULT_BATCH_SIZE
+                _total = (len(locs_batch) + _batch_size - 1) // _batch_size
+                for _i in range(0, len(locs_batch), _batch_size):
+                    _b = locs_batch[_i:_i + _batch_size]
+                    _bn = _i // _batch_size + 1
+                    self._log(f"  [Batch] {_bn}/{_total} ({len(_b)} locations)…")
+                    self.fetch_admin_hierarchy_batch(_b, timeout_sec=config.HIERARCHY_QUERY_TIMEOUT)
+                    if _i + _batch_size < len(locs_batch):
+                        time.sleep(config.HIERARCHY_BATCH_DELAY)
+                batch_time = _t.time() - t0
+                batch_cov = sum(1 for l in locs_batch if l.get('admin_hierarchy', {}).get('level_4_name'))
+
+                # --- Approach B: bbox (new) ---
+                self._log("[A/B] Running BBOX approach…")
+                t0 = _t.time()
+                self.fetch_admin_hierarchy_bbox(locs_bbox)
+                bbox_time = _t.time() - t0
+                bbox_cov = sum(1 for l in locs_bbox if l.get('admin_hierarchy', {}).get('level_4_name'))
+
+                # --- Compare ---
+                mismatches = []
+                for lb, lbx in zip(locs_batch, locs_bbox):
+                    hb  = lb.get('admin_hierarchy', {})
+                    hbx = lbx.get('admin_hierarchy', {})
+                    diffs = [
+                        f"{k}: batch={hb.get(k)!r} bbox={hbx.get(k)!r}"
+                        for k in ('level_8_name', 'level_6_name', 'level_4_name')
+                        if hb.get(k) != hbx.get(k)
+                    ]
+                    if diffs:
+                        mismatches.append((lb.get('name', '?'), diffs))
+
+                n = len(locs_batch)
+                match_pct = 100 * (n - len(mismatches)) / n if n else 0
+                speedup = batch_time / bbox_time if bbox_time > 0 else float('inf')
+
+                self._log("[A/B COMPARE RESULTS] ──────────────────────────────")
+                self._log(f"  Speed    — Batch: {batch_time:.1f}s  |  BBox: {bbox_time:.1f}s  ({speedup:.1f}x speedup)")
+                self._log(f"  Coverage — Batch: {batch_cov}/{n}  |  BBox: {bbox_cov}/{n}")
+                self._log(f"  Accuracy — {n - len(mismatches)}/{n} locations agree ({match_pct:.1f}%)")
+                if mismatches:
+                    self._log(f"  Mismatches ({len(mismatches)}):")
+                    for name, diffs in mismatches[:15]:
+                        self._log(f"    • {name}: {' | '.join(diffs)}")
+                    if len(mismatches) > 15:
+                        self._log(f"    … and {len(mismatches) - 15} more")
+                self._log("────────────────────────────────────────────────────")
+
+                # Apply batch results to real locations (ground truth for downstream stages)
+                for orig, lb in zip(all_locations, locs_batch):
+                    orig['admin_hierarchy'] = lb.get('admin_hierarchy', {})
+
+            elif hierarchy_method == 'bbox':
+                # ── Bbox-only (fast path) ──
+                self.fetch_admin_hierarchy_bbox(all_locations)
+
+            else:
+                # ── Batch (default, original proven approach) ──
+                batch_size = config.DEFAULT_BATCH_SIZE
+                total_batches = (len(all_locations) + batch_size - 1) // batch_size
+                hierarchy_completed = 0
+                for i in range(0, len(all_locations), batch_size):
+                    batch = all_locations[i:i + batch_size]
+                    batch_num = (i // batch_size) + 1
+                    self._log(f"  Retrieving hierarchy batch {batch_num}/{total_batches} ({len(batch)} locations)...")
+                    self.fetch_admin_hierarchy_batch(batch, timeout_sec=config.HIERARCHY_QUERY_TIMEOUT)
+                    hierarchy_completed = batch_num
+                    estimated_time = self._estimate_processing_time(len(all_locations), hierarchy_completed, 0)
+                    self._log(f"Estimated remaining time: {estimated_time}")
+                    if i + batch_size < len(all_locations):
+                        time.sleep(config.HIERARCHY_BATCH_DELAY)
+
             self._log("Finished retrieving administrative boundaries.")
             self._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries completed")
 

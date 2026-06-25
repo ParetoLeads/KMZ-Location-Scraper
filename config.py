@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.21"
+    APP_VERSION: str = "1.0.22"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [
@@ -81,6 +81,12 @@ class Config:
 
     # Parallelism: number of AI batches to run concurrently (Stage 4)
     PARALLEL_AI_BATCHES: int = int(os.getenv('PARALLEL_AI_BATCHES', '3'))
+
+    # Stage 3 hierarchy method:
+    #   'batch'   — current per-batch centroid is_in queries (default, proven)
+    #   'bbox'    — single bounding-box query + local shapely point-in-polygon (fast, experimental)
+    #   'compare' — runs both and logs speed/coverage/accuracy comparison (for A/B testing)
+    HIERARCHY_METHOD: str = os.getenv('HIERARCHY_METHOD', 'batch')
     
     # UI Settings
     MAX_FILE_SIZE_MB: int = int(os.getenv('MAX_FILE_SIZE_MB', '1'))

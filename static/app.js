@@ -53,12 +53,14 @@ async function renderRunsTable() {
 
   const rows = localRuns.map(r => {
     const name = (r.filename || "unknown.kmz").replace(/\.kmz$/i, "");
-    const ts = fmtDate(r.completed_at);
-    const count = r.location_count != null ? r.location_count + " locations" : "—";
-    const canDownload = serverIds.has(r.job_id) && r.has_excel !== false;
+    const ts = r.completed_at ? fmtDate(r.completed_at) : '<span style="color:#9CA3AF">Running…</span>';
+    const count = (r.location_count != null && r.location_count > 0) ? r.location_count.toLocaleString() : "—";
+    const canDownload = serverIds.has(r.job_id) && r.has_excel !== false && r.completed_at;
     const dlBtn = canDownload
-      ? `<button class="btn-dl" onclick="window.location.href='/api/download/${r.job_id}'">⬇ Excel</button>`
-      : `<span class="run-expired">Expired</span>`;
+      ? `<button class="btn-dl" onclick="window.location.href='/api/download/${r.job_id}'">⬇ Download Excel</button>`
+      : r.completed_at
+        ? `<span class="run-expired">Expired</span>`
+        : "";
     return `<tr>
       <td class="run-name">${esc(name)}</td>
       <td class="run-ts">${ts}</td>
@@ -67,10 +69,10 @@ async function renderRunsTable() {
     </tr>`;
   }).join("");
 
-  container.innerHTML = `<table id="runs-table">
-    <thead><tr><th>File</th><th>Completed</th><th>Locations</th><th></th></tr></thead>
+  container.innerHTML = `<div class="table-wrap"><table id="runs-table">
+    <thead><tr><th>File</th><th>Completed</th><th>Locations</th><th>Download</th></tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table></div>`;
 }
 
 function esc(s) { return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
@@ -226,58 +228,74 @@ startBtn.addEventListener("click", async () => {
 });
 
 function streamProgress(jobId) {
-  const es = new EventSource("/api/stream/" + jobId);
+  let es = null;
+  let reconnectTimer = null;
+  let done = false;
 
-  es.addEventListener("progress", e => {
-    const msg = e.data;
-    log(msg);
+  function connect() {
+    if (done) return;
+    es = new EventSource("/api/stream/" + jobId);
 
-    // Drive stage tracker from CHECKPOINT messages
-    if (msg.includes("CHECKPOINT")) {
-      const stageNum = detectStage(msg);
-      if (stageNum) {
-        const isDone = msg.includes("completed") || msg.includes("successfully");
-        setStage(stageNum, isDone);
+    es.addEventListener("ping", () => {}); // keepalive — ignore
+
+    es.addEventListener("progress", e => {
+      const msg = e.data;
+      log(msg);
+      if (msg.includes("CHECKPOINT")) {
+        const stageNum = detectStage(msg);
+        if (stageNum) {
+          const isDone = msg.includes("completed") || msg.includes("successfully");
+          setStage(stageNum, isDone);
+        }
       }
-    }
-
-    // Update estimated remaining from log line "Estimated remaining time: Xm Ys"
-    const estMatch = msg.match(/Estimated remaining time:\s*(.+)/);
-    if (estMatch) {
-      document.getElementById("timer-remaining").textContent = estMatch[1].trim();
-    }
-  });
-
-  es.addEventListener("complete", e => {
-    let info = {};
-    try { info = JSON.parse(e.data); } catch (_) {}
-    for (let i = 1; i <= 5; i++) setStage(i, true);
-    stopTimer();
-    const elapsed = jobStartTime ? fmtSecs((Date.now() - jobStartTime) / 1000) : "";
-    document.getElementById("timer-remaining").textContent = "done";
-    log("✅ Complete — " + (info.location_count || 0) + " locations found" + (elapsed ? " in " + elapsed : "") + ".");
-    // Record completed run
-    saveLocalRun({
-      job_id: jobId,
-      filename: currentFilename || jobId + ".kmz",
-      completed_at: Math.floor(Date.now() / 1000),
-      location_count: info.location_count || 0,
-      has_excel: (info.location_count || 0) > 0,
+      const estMatch = msg.match(/Estimated remaining time:\s*(.+)/);
+      if (estMatch) {
+        document.getElementById("timer-remaining").textContent = estMatch[1].trim();
+      }
     });
-    renderRunsTable();
-    es.close();
-    fetchAndShowResults(jobId);
-    startBtn.disabled = false;
-  });
 
-  es.addEventListener("error", e => {
-    stopTimer();
-    log("❌ Error: " + (e.data || "processing failed"));
-    es.close();
-    startBtn.disabled = false;
-  });
+    es.addEventListener("complete", e => {
+      done = true;
+      let info = {};
+      try { info = JSON.parse(e.data); } catch (_) {}
+      for (let i = 1; i <= 5; i++) setStage(i, true);
+      stopTimer();
+      const elapsed = jobStartTime ? fmtSecs((Date.now() - jobStartTime) / 1000) : "";
+      document.getElementById("timer-remaining").textContent = "done";
+      log("✅ Complete — " + (info.location_count || 0) + " locations found" + (elapsed ? " in " + elapsed : "") + ".");
+      saveLocalRun({
+        job_id: jobId,
+        filename: currentFilename || jobId + ".kmz",
+        completed_at: Math.floor(Date.now() / 1000),
+        location_count: info.location_count || 0,
+        has_excel: (info.location_count || 0) > 0,
+      });
+      renderRunsTable();
+      es.close();
+      fetchAndShowResults(jobId);
+      startBtn.disabled = false;
+    });
 
-  es.onerror = () => es.close();
+    es.addEventListener("error", e => {
+      // Server-sent error (has data) — real failure
+      done = true;
+      stopTimer();
+      log("❌ Error: " + e.data);
+      es.close();
+      startBtn.disabled = false;
+    });
+
+    es.onerror = () => {
+      // Network/connection drop — reconnect after 3s
+      es.close();
+      if (!done) {
+        log("⚠ Connection dropped, reconnecting…");
+        reconnectTimer = setTimeout(connect, 3000);
+      }
+    };
+  }
+
+  connect();
 }
 
 // ── Results ────────────────────────────────────────────────────

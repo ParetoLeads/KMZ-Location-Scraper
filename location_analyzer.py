@@ -28,11 +28,12 @@ from utils.retry_handler import execute_with_retry
 from utils.cache import cache_osm_query, set_osm_query_cache, cache_hierarchy, set_hierarchy_cache
 
 # Ordered fallback chain for Overpass API (tried in sequence on timeout or non-2xx)
+# mail.ru is first — consistently reachable from Railway IPs where kumi.systems often times out
 OVERPASS_FALLBACK_URLS = [
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.openstreetmap.ru/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 OVERPASS_FALLBACK_URL = OVERPASS_FALLBACK_URLS[0]  # kept for hierarchy function compatibility
 

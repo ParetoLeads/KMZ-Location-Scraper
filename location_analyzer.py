@@ -754,8 +754,12 @@ class LocationAnalyzer:
         independent and can be compared via HIERARCHY_METHOD='compare'.
         """
         import time as _t
-        from shapely.geometry import Point, LineString
-        from shapely.ops import polygonize, unary_union
+        try:
+            from shapely.geometry import Point, LineString
+            from shapely.ops import polygonize, unary_union
+        except ImportError:
+            self._log("[BBox] shapely not installed — bbox approach unavailable. Install: pip install shapely>=2.0.0")
+            return all_locations
 
         start_time = _t.time()
 
@@ -1815,24 +1819,23 @@ class LocationAnalyzer:
             hierarchy_method = getattr(config, 'HIERARCHY_METHOD', 'batch')
 
             if hierarchy_method == 'compare':
-                # ── A/B compare: run both approaches on deep copies, apply batch to real data ──
+                # ── A/B compare: run both on deep copies; batch results applied to real data ──
                 import copy as _copy
                 import time as _t
 
                 locs_batch = _copy.deepcopy(all_locations)
                 locs_bbox  = _copy.deepcopy(all_locations)
 
-                # --- Approach A: batch (existing) ---
+                # --- Approach A: batch (existing, unchanged) ---
                 self._log("[A/B] Running BATCH approach…")
                 t0 = _t.time()
-                _batch_size = config.DEFAULT_BATCH_SIZE
-                _total = (len(locs_batch) + _batch_size - 1) // _batch_size
-                for _i in range(0, len(locs_batch), _batch_size):
-                    _b = locs_batch[_i:_i + _batch_size]
-                    _bn = _i // _batch_size + 1
-                    self._log(f"  [Batch] {_bn}/{_total} ({len(_b)} locations)…")
+                _bs = config.DEFAULT_BATCH_SIZE
+                _tot = (len(locs_batch) + _bs - 1) // _bs
+                for _i in range(0, len(locs_batch), _bs):
+                    _b = locs_batch[_i:_i + _bs]
+                    self._log(f"  [Batch] {_i // _bs + 1}/{_tot} ({len(_b)} locations)…")
                     self.fetch_admin_hierarchy_batch(_b, timeout_sec=config.HIERARCHY_QUERY_TIMEOUT)
-                    if _i + _batch_size < len(locs_batch):
+                    if _i + _bs < len(locs_batch):
                         time.sleep(config.HIERARCHY_BATCH_DELAY)
                 batch_time = _t.time() - t0
                 batch_cov = sum(1 for l in locs_batch if l.get('admin_hierarchy', {}).get('level_4_name'))
@@ -1840,40 +1843,47 @@ class LocationAnalyzer:
                 # --- Approach B: bbox (new) ---
                 self._log("[A/B] Running BBOX approach…")
                 t0 = _t.time()
-                self.fetch_admin_hierarchy_bbox(locs_bbox)
+                bbox_ok = True
+                try:
+                    self.fetch_admin_hierarchy_bbox(locs_bbox)
+                except Exception as _err:
+                    self._log(f"[A/B] BBOX failed: {_err}")
+                    bbox_ok = False
                 bbox_time = _t.time() - t0
                 bbox_cov = sum(1 for l in locs_bbox if l.get('admin_hierarchy', {}).get('level_4_name'))
 
-                # --- Compare ---
-                mismatches = []
-                for lb, lbx in zip(locs_batch, locs_bbox):
-                    hb  = lb.get('admin_hierarchy', {})
-                    hbx = lbx.get('admin_hierarchy', {})
-                    diffs = [
-                        f"{k}: batch={hb.get(k)!r} bbox={hbx.get(k)!r}"
-                        for k in ('level_8_name', 'level_6_name', 'level_4_name')
-                        if hb.get(k) != hbx.get(k)
-                    ]
-                    if diffs:
-                        mismatches.append((lb.get('name', '?'), diffs))
-
+                # --- Report ---
                 n = len(locs_batch)
-                match_pct = 100 * (n - len(mismatches)) / n if n else 0
-                speedup = batch_time / bbox_time if bbox_time > 0 else float('inf')
-
                 self._log("[A/B COMPARE RESULTS] ──────────────────────────────")
-                self._log(f"  Speed    — Batch: {batch_time:.1f}s  |  BBox: {bbox_time:.1f}s  ({speedup:.1f}x speedup)")
-                self._log(f"  Coverage — Batch: {batch_cov}/{n}  |  BBox: {bbox_cov}/{n}")
-                self._log(f"  Accuracy — {n - len(mismatches)}/{n} locations agree ({match_pct:.1f}%)")
-                if mismatches:
-                    self._log(f"  Mismatches ({len(mismatches)}):")
-                    for name, diffs in mismatches[:15]:
-                        self._log(f"    • {name}: {' | '.join(diffs)}")
-                    if len(mismatches) > 15:
-                        self._log(f"    … and {len(mismatches) - 15} more")
+                if not bbox_ok:
+                    self._log(f"  Speed    — Batch: {batch_time:.1f}s  |  BBox: FAILED")
+                    self._log(f"  Coverage — Batch: {batch_cov}/{n}  |  BBox: N/A")
+                else:
+                    speedup = batch_time / bbox_time if bbox_time > 0 else float('inf')
+                    mismatches = []
+                    for lb, lbx in zip(locs_batch, locs_bbox):
+                        hb  = lb.get('admin_hierarchy', {})
+                        hbx = lbx.get('admin_hierarchy', {})
+                        diffs = [
+                            f"{k}: batch={hb.get(k)!r} bbox={hbx.get(k)!r}"
+                            for k in ('level_8_name', 'level_6_name', 'level_4_name')
+                            if hb.get(k) != hbx.get(k)
+                        ]
+                        if diffs:
+                            mismatches.append((lb.get('name', '?'), diffs))
+                    match_pct = 100 * (n - len(mismatches)) / n if n else 0
+                    self._log(f"  Speed    — Batch: {batch_time:.1f}s  |  BBox: {bbox_time:.1f}s  ({speedup:.1f}x faster)")
+                    self._log(f"  Coverage — Batch: {batch_cov}/{n}  |  BBox: {bbox_cov}/{n}")
+                    self._log(f"  Accuracy — {n - len(mismatches)}/{n} agree ({match_pct:.1f}%)")
+                    if mismatches:
+                        self._log(f"  Mismatches ({len(mismatches)}):")
+                        for name, diffs in mismatches[:15]:
+                            self._log(f"    • {name}: {' | '.join(diffs)}")
+                        if len(mismatches) > 15:
+                            self._log(f"    … and {len(mismatches) - 15} more")
                 self._log("────────────────────────────────────────────────────")
 
-                # Apply batch results to real locations (ground truth for downstream stages)
+                # Apply batch results to real locations (ground truth)
                 for orig, lb in zip(all_locations, locs_batch):
                     orig['admin_hierarchy'] = lb.get('admin_hierarchy', {})
 

@@ -4,9 +4,12 @@ import uuid
 import threading
 import tempfile
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, FileResponse
 from sse_starlette.sse import EventSourceResponse
-from server.job_store import create_job, get_job, append_event, list_completed_jobs
+from server.job_store import (
+    create_job, get_job, append_event, list_completed_jobs,
+    persist_job_meta, RESULTS_DIR,
+)
 
 router = APIRouter()
 
@@ -48,19 +51,24 @@ def _run_analysis(job_id: str, kmz_path: str, filename: str = "", min_population
         locations = analyzer.run()
         if locations:
             excel_bio = analyzer.save_to_excel(locations, min_population=min_population)
-            job.result_excel = excel_bio.getvalue() if excel_bio else None
-        else:
-            job.result_excel = None
+            if excel_bio:
+                os.makedirs(RESULTS_DIR, exist_ok=True)
+                excel_path = os.path.join(RESULTS_DIR, f"{job_id}.xlsx")
+                with open(excel_path, "wb") as fh:
+                    fh.write(excel_bio.getvalue())
+                job.result_excel_path = excel_path
         job.locations = locations or []
         job.location_count = len(job.locations)
         job.completed_at = _time.time()
         job.status = "complete"
+        persist_job_meta(job_id)
         append_event(job_id, {"type": "complete", "data": json.dumps({"location_count": len(job.locations)})})
     except Exception as e:
         import time as _time
         job.completed_at = _time.time()
         append_event(job_id, {"type": "error", "data": str(e)})
         job.status = "error"
+        persist_job_meta(job_id)
     finally:
         try:
             os.unlink(kmz_path)
@@ -100,7 +108,7 @@ async def stream(job_id: str):
         import time as _time
         sent = 0
         last_sent_ts = _time.monotonic()
-        PING_INTERVAL = 15  # seconds — keeps Railway/nginx proxy from dropping idle SSE connections
+        PING_INTERVAL = 15  # keeps Railway/nginx proxy from dropping idle SSE connections
         while True:
             events = job.events
             while sent < len(events):
@@ -121,12 +129,15 @@ async def stream(job_id: str):
 @router.get("/api/download/{job_id}")
 def download(job_id: str):
     job = get_job(job_id)
-    if job is None or job.result_excel is None:
-        raise HTTPException(status_code=404, detail="Result not ready or job not found")
-    return Response(
-        content=job.result_excel,
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    path = job.result_excel_path
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File not found — container may have restarted before the volume was mounted")
+    return FileResponse(
+        path=path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="results_{job_id[:8]}.xlsx"'},
+        filename=f"results_{job_id[:8]}.xlsx",
     )
 
 

@@ -610,84 +610,90 @@ class LocationAnalyzer:
         timeout_sec: Optional[int] = None,
         max_retry_attempts: Optional[int] = None,
     ) -> List[Dict]:
-        """Get administrative hierarchy for multiple locations in a single batch request with retry.
-        Public for chunked/rerun processing. Use timeout_sec and max_retry_attempts in chunked mode to avoid run timeout."""
+        """Get administrative hierarchy for a batch of locations in one Overpass request.
+
+        Uses the centroid of the batch as a single is_in lookup point.  All
+        locations in a batch come from the same small KMZ-bounded area, so
+        country/state/county are shared — the centroid will land in the correct
+        admin areas for the whole batch.
+
+        This is O(1) is_in operations per batch regardless of batch size, making
+        it as fast as the old (broken) approach while returning all four admin
+        levels via a simple 4-entry union.
+        """
         if not locations:
             return locations
 
         timeout = timeout_sec if timeout_sec is not None else config.OSM_API_TIMEOUT
         max_attempts = max_retry_attempts if max_retry_attempts is not None else config.MAX_RETRY_ATTEMPTS
 
-        query_parts = []
-        for i, location in enumerate(locations):
-            lat = location.get('latitude')
-            lon = location.get('longitude')
-            if lat is not None and lon is not None:
-                query_parts.append(f"is_in({lat},{lon}) -> .a{i};")
-                query_parts.append(f"area.a{i}[admin_level=\"8\"]; area.a{i}[admin_level=\"6\"]; area.a{i}[admin_level=\"4\"]; area.a{i}[admin_level=\"2\"];")
-
-        if not query_parts:
+        valid_locs = [
+            (loc, loc['latitude'], loc['longitude'])
+            for loc in locations
+            if loc.get('latitude') is not None and loc.get('longitude') is not None
+        ]
+        if not valid_locs:
             return locations
 
-        query = f"""
-        [out:json][timeout:{timeout}];
-        {" ".join(query_parts)}
-        out tags;
-        """
-        
+        centroid_lat = sum(lat for _, lat, _ in valid_locs) / len(valid_locs)
+        centroid_lon = sum(lon for _, _, lon in valid_locs) / len(valid_locs)
+
+        query = (
+            f"[out:json][timeout:{timeout}];\n"
+            f"is_in({centroid_lat},{centroid_lon}) -> .hier;\n"
+            f"(\n"
+            + "".join(f"  area.hier[admin_level={lvl}];\n" for lvl in config.ADMIN_LEVELS)
+            + ");\n"
+            "out tags;"
+        )
+
         def _process_hierarchy_data(data: Dict[str, Any]) -> None:
-            """Process hierarchy data and update locations."""
-            for i, location in enumerate(locations):
+            batch_levels: Dict[int, str] = {}
+            for element in data.get('elements', []):
+                tags = element.get('tags', {})
+                level_str = tags.get('admin_level')
+                name = tags.get('name') or tags.get('name:en')
+                if level_str and name and level_str.isdigit():
+                    level = int(level_str)
+                    if level not in batch_levels:
+                        batch_levels[level] = name
+
+            sorted_levels = sorted(batch_levels.keys(), reverse=True)
+
+            for location in locations:
                 lat = location.get('latitude')
                 lon = location.get('longitude')
                 if lat is None or lon is None:
                     continue
 
-                # Check cache first
-                cached_hierarchy = cache_hierarchy(lat, lon)
-                if cached_hierarchy is not None:
-                    location['admin_hierarchy'] = cached_hierarchy
+                cached = cache_hierarchy(lat, lon)
+                if cached is not None:
+                    location['admin_hierarchy'] = cached
                     continue
 
-                hierarchy = {f'level_{level}_name': None for level in config.ADMIN_LEVELS}
+                hierarchy = {f'level_{lvl}_name': None for lvl in config.ADMIN_LEVELS}
                 hierarchy['containing_level'] = None
                 hierarchy['parent_level'] = None
                 hierarchy['parent_name'] = None
 
-                found_levels = {}
-                for element in data.get('elements', []):
-                    tags = element.get('tags', {})
-                    level_str = tags.get('admin_level')
-                    name = tags.get('name') or tags.get('name:en')
-                    if level_str and name and level_str.isdigit():
-                        level = int(level_str)
-                        level_key = f'level_{level}_name'
-                        if level_key in hierarchy:
-                            hierarchy[level_key] = name
-                            found_levels[level] = name
+                for level, name in batch_levels.items():
+                    level_key = f'level_{level}_name'
+                    if level_key in hierarchy:
+                        hierarchy[level_key] = name
 
-                sorted_found_levels = sorted(found_levels.keys(), reverse=True)
-                if sorted_found_levels:
-                    hierarchy['containing_level'] = sorted_found_levels[0]
-                    if len(sorted_found_levels) > 1:
-                        hierarchy['parent_level'] = sorted_found_levels[1]
-                        hierarchy['parent_name'] = found_levels.get(sorted_found_levels[1])
+                if sorted_levels:
+                    hierarchy['containing_level'] = sorted_levels[0]
+                    if len(sorted_levels) > 1:
+                        hierarchy['parent_level'] = sorted_levels[1]
+                        hierarchy['parent_name'] = batch_levels.get(sorted_levels[1])
 
                 location['admin_hierarchy'] = hierarchy
-                
-                # Cache the hierarchy
                 set_hierarchy_cache(lat, lon, hierarchy)
-        
-        # Use smaller buffer in chunked mode so run finishes before gateway timeout
-        if timeout_sec is not None:
-            buffer = getattr(config, 'HIERARCHY_TIMEOUT_BUFFER', 2)
-        else:
-            buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
 
+        buffer = getattr(config, 'OSM_API_TIMEOUT_BUFFER', 10)
         OSM_HEADERS = {"User-Agent": "KMZ-Location-Scraper/1.0 (office@paretoleads.com)", "Accept": "*/*"}
 
         def _execute_hierarchy_query() -> Dict[str, Any]:
-            """Execute the hierarchy query; on primary timeout or error try all fallback mirrors."""
             self._log(f"[Overpass] POST start url={self.overpass_url} timeout={timeout + buffer}s")
             query_stripped = query.strip()
             response = None
@@ -700,24 +706,22 @@ class LocationAnalyzer:
                 )
                 if not response.ok:
                     self._log(f"[Overpass] Primary returned HTTP {response.status_code}, trying fallbacks")
-                    response = None
                     raise requests.exceptions.Timeout("Primary non-2xx, try fallbacks")
             except requests.exceptions.Timeout:
                 response = None
                 for fallback_url in OVERPASS_FALLBACK_URLS:
                     self._log(f"[Overpass] Trying fallback {fallback_url}")
                     try:
-                        fb_response = requests.post(
+                        fb = requests.post(
                             fallback_url,
                             data={"data": query_stripped},
                             timeout=timeout + buffer,
                             headers=OSM_HEADERS,
                         )
-                        if fb_response.ok:
-                            response = fb_response
+                        if fb.ok:
+                            response = fb
                             break
-                        self._log(f"[Overpass] Fallback {fallback_url} returned HTTP {fb_response.status_code}, trying next...")
-                        response = fb_response
+                        self._log(f"[Overpass] Fallback {fallback_url} returned HTTP {fb.status_code}, trying next...")
                     except requests.exceptions.Timeout:
                         self._log(f"[Overpass] Fallback {fallback_url} timed out, trying next...")
                         continue
@@ -727,15 +731,15 @@ class LocationAnalyzer:
             response.raise_for_status()
             txt = response.text.strip() if response.text else ""
             if not txt or len(txt) < 10:
-                raise ValueError(f"Empty or too short response from Overpass API (status {response.status_code}, length={len(txt)})")
+                raise ValueError(f"Empty/short response (status {response.status_code}, len={len(txt)})")
             return response.json()
-        
+
         try:
             self._log(f"[Overpass] execute_with_retry max_attempts={max_attempts}")
             data = execute_with_retry(
                 _execute_hierarchy_query,
                 max_attempts=max_attempts,
-                log_callback=lambda msg: self._log(f"Hierarchy query: {msg}")
+                log_callback=lambda msg: self._log(f"Hierarchy query: {msg}"),
             )
             _process_hierarchy_data(data)
             return locations
@@ -1485,12 +1489,16 @@ class LocationAnalyzer:
                  
             df = pd.json_normalize(all_locations, sep='_')
             
-            # Full Data Sheet - Include all population columns
+            # Full Data Sheet - Include all population columns + admin hierarchy
             final_columns = [
                 'name',
                 'type',
                 'latitude',
                 'longitude',
+                'admin_hierarchy_level_8_name',
+                'admin_hierarchy_level_6_name',
+                'admin_hierarchy_level_4_name',
+                'admin_hierarchy_level_2_name',
                 'gpt_population',
                 'gpt_confidence',
                 'gemini_population',
@@ -1499,11 +1507,11 @@ class LocationAnalyzer:
                 'combined_confidence',
                 'local_names',
             ]
-            
+
             for col in final_columns:
                 if col not in df.columns:
                     df[col] = None
-            
+
             df_full = df[final_columns].copy()
             # Convert local_names list to comma-separated string for Excel compatibility
             if 'local_names' in df_full.columns:
@@ -1512,6 +1520,10 @@ class LocationAnalyzer:
                 )
             col_rename = {col: col.replace('admin_hierarchy_', '') for col in df_full.columns}
             col_rename['local_names'] = 'Local Search Names'
+            col_rename['admin_hierarchy_level_8_name'] = 'City'
+            col_rename['admin_hierarchy_level_6_name'] = 'County'
+            col_rename['admin_hierarchy_level_4_name'] = 'State'
+            col_rename['admin_hierarchy_level_2_name'] = 'Country'
             df_full = df_full.rename(columns=col_rename)
             
             numeric_cols = ['gpt_population', 'gemini_population', 'combined_population', 'containing_level']
@@ -1645,7 +1657,7 @@ class LocationAnalyzer:
                 batch = all_locations[i:i + batch_size]
                 batch_num = (i // batch_size) + 1
                 self._log(f"  Retrieving hierarchy batch {batch_num}/{total_batches} ({len(batch)} locations)...")
-                self.fetch_admin_hierarchy_batch(batch)
+                self.fetch_admin_hierarchy_batch(batch, timeout_sec=config.HIERARCHY_QUERY_TIMEOUT)
                 hierarchy_completed = batch_num
                 # Update estimate after each batch
                 estimated_time = self._estimate_processing_time(len(all_locations), hierarchy_completed, 0)

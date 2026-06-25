@@ -1215,12 +1215,19 @@ class LocationAnalyzer:
                 try:
                     gpt_results_map = {}
                     gemini_results_map = {}
-                    
-                    # Sequential: GPT first, then Gemini (Gemini rate-limit spacing enforced inside _get_gemini_populations_batch)
-                    if use_openai:
-                        gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
-                    if use_gemini:
-                        gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
+
+                    if use_openai and use_gemini:
+                        # Parallel: GPT and Gemini run concurrently
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                            gpt_future = executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)
+                            gemini_future = executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)
+                            gpt_results_map = gpt_future.result()
+                            gemini_results_map = gemini_future.result()
+                    else:
+                        if use_openai:
+                            gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
+                        if use_gemini:
+                            gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
                     
                     # Store GPT results
                     success_count = 0

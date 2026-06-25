@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.14"
+    APP_VERSION: str = "1.0.15"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [
@@ -29,10 +29,11 @@ class Config:
         return self.PRIMARY_PLACE_TYPES + self.ADDITIONAL_PLACE_TYPES + self.SPECIAL_PLACE_TYPES
     
     # API Settings
-    # Overpass API. Default uses kumi.systems (fewer 504s than overpass-api.de). Override with OVERPASS_URL or OSM_OVERPASS_URL.
+    # Overpass API. mail.ru is primary — fastest and most reliable from cloud IPs.
+    # Override with OVERPASS_URL or OSM_OVERPASS_URL env vars if needed.
     OSM_OVERPASS_URL: str = os.getenv(
         'OVERPASS_URL',
-        os.getenv('OSM_OVERPASS_URL', 'https://overpass.kumi.systems/api/interpreter')
+        os.getenv('OSM_OVERPASS_URL', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter')
     )
     OSM_API_TIMEOUT: int = int(os.getenv('OSM_API_TIMEOUT', '60'))
     OSM_API_TIMEOUT_BUFFER: int = 10  # Additional seconds for timeout buffer
@@ -65,7 +66,7 @@ class Config:
     
     # GPT Settings
     USE_GPT: bool = os.getenv('USE_GPT', 'True').lower() == 'true'
-    GPT_MODEL: str = os.getenv('GPT_MODEL', 'gpt-4-turbo')
+    GPT_MODEL: str = os.getenv('GPT_MODEL', 'gpt-4o-mini')
     GPT_TEMPERATURE: float = 0.1
     
     # Gemini Settings

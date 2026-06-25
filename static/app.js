@@ -277,7 +277,10 @@ function streamProgress(jobId) {
     });
 
     es.addEventListener("error", e => {
-      // Server-sent error (has data) — real failure
+      // Only handle server-sent error events that carry a data payload.
+      // Plain connection drops also fire this event but with e.data undefined —
+      // those are handled by es.onerror below (reconnect logic).
+      if (!e.data) return;
       done = true;
       stopTimer();
       log("❌ Error: " + e.data);
@@ -286,7 +289,7 @@ function streamProgress(jobId) {
     });
 
     es.onerror = () => {
-      // Network/connection drop — reconnect after 3s
+      // Connection drop — auto-reconnect after 3s
       es.close();
       if (!done) {
         log("⚠ Connection dropped, reconnecting…");

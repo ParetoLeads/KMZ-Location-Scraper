@@ -157,45 +157,45 @@ class LocationAnalyzer:
             self.status_callback(timestamped_message)
     
     def _estimate_processing_time(self, num_locations: int, hierarchy_completed: int = 0, gpt_completed: int = 0) -> str:
-        """Estimate remaining processing time based on number of locations and completed batches.
-        
-        Timing assumptions (updated for new retry logic):
-        - Hierarchy batches: 10 locations per batch, 4s delay between batches, ~3s processing
-        - GPT batches: 10 locations per batch, 2s delay between batches, ~6s API response
-        - Retry overhead: Assume 10% of batches need retries (avg 2 retries = 15s extra per failed batch)
+        """Estimate remaining processing time based on empirical timing data.
+
+        Calibrated from 5 real runs (83–377 locations):
+          Stage 2 (OSM discovery):  ~150s fixed  (mostly query overhead, not location-dependent)
+          Stage 3 (hierarchy):       37s/batch of 10 + 87s fixed overhead
+          Stage 4 (AI population):   70s/batch of 30  (only when AI keys are present)
         """
-        batch_size = 10
-        total_batches = ceil(num_locations / batch_size)
-        
-        # Calculate remaining batches
-        hierarchy_remaining = max(0, total_batches - hierarchy_completed)
-        gpt_remaining = max(0, total_batches - gpt_completed)
-        
-        # Base time per batch: processing + delay
-        hierarchy_time_per_batch = 7  # 4s delay + 3s processing
-        gpt_time_per_batch = 8  # 2s delay + 6s API response
-        
-        # Add retry overhead: 10% of batches fail, avg 2 retries = 15s extra
-        retry_overhead_per_batch = 0.1 * 15  # 1.5s average overhead per batch
-        
-        # Calculate remaining time
-        hierarchy_time = hierarchy_remaining * (hierarchy_time_per_batch + retry_overhead_per_batch)
-        gpt_time = gpt_remaining * (gpt_time_per_batch + retry_overhead_per_batch)
-        
-        # Total remaining time in seconds
-        total_seconds = int(hierarchy_time + gpt_time)
-        
-        # Convert to human-readable format
-        if total_seconds >= 60:
-            minutes = total_seconds // 60
-            seconds = total_seconds % 60
-            if minutes >= 60:
-                hours = minutes // 60
-                minutes = minutes % 60
-                return f"{int(hours)}h {int(minutes)}m"
-            return f"{int(minutes)}m {int(seconds)}s"
+        hierarchy_batch_size = config.DEFAULT_BATCH_SIZE  # 10
+        ai_batch_size = config.DEFAULT_CHUNK_SIZE          # 30
+
+        total_hierarchy_batches = ceil(num_locations / hierarchy_batch_size)
+        total_ai_batches = ceil(num_locations / ai_batch_size)
+
+        hierarchy_remaining = max(0, total_hierarchy_batches - hierarchy_completed)
+        ai_remaining = max(0, total_ai_batches - gpt_completed)
+
+        # Stage 3: 37s per batch + 87s fixed (amortised across remaining batches)
+        if total_hierarchy_batches > 0:
+            fixed_per_remaining = 87 * hierarchy_remaining / total_hierarchy_batches
         else:
-            return f"{int(total_seconds)}s"
+            fixed_per_remaining = 0
+        hierarchy_time = hierarchy_remaining * 37 + fixed_per_remaining
+
+        # Stage 4: only if AI is actually enabled
+        ai_enabled = self.use_gpt and (self.use_openai or self.use_gemini_flag or not self._ai_clients_initialized)
+        ai_time = ai_remaining * 70 if ai_enabled else 0
+
+        total_seconds = int(hierarchy_time + ai_time)
+
+        if total_seconds >= 3600:
+            h = total_seconds // 3600
+            m = (total_seconds % 3600) // 60
+            return f"{h}h {m}m"
+        elif total_seconds >= 60:
+            m = total_seconds // 60
+            s = total_seconds % 60
+            return f"{m}m {s}s"
+        else:
+            return f"{total_seconds}s"
     
     def _generate_output_filename(self, kmz_file: str) -> str:
         """Generate output Excel filename based on KMZ filename."""

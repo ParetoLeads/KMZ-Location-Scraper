@@ -1,6 +1,8 @@
 let currentJobId = null;
 let map = null;
 let allLocations = [];
+let timerInterval = null;
+let jobStartTime = null;
 
 const fileInput    = document.getElementById("file-input");
 const startBtn     = document.getElementById("start-btn");
@@ -65,6 +67,38 @@ function onFileSelected() {
   }
 }
 
+// ── Timer ──────────────────────────────────────────────────────
+function fmtSecs(s) {
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2,'0')}s`;
+  return `${sec}s`;
+}
+
+function startTimer() {
+  jobStartTime = Date.now();
+  document.getElementById("timer-elapsed").textContent = "0:00";
+  document.getElementById("timer-remaining").textContent = "—";
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    const elapsed = (Date.now() - jobStartTime) / 1000;
+    const s = Math.floor(elapsed);
+    const m = Math.floor(s / 60);
+    document.getElementById("timer-elapsed").textContent =
+      m > 0 ? `${m}m ${String(s % 60).padStart(2,'0')}s` : `${s}s`;
+  }, 1000);
+}
+
+function stopTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+  document.getElementById("timer-pulse").style.animation = "none";
+  document.getElementById("timer-pulse").style.background = "#16A34A";
+}
+
 // ── Log ────────────────────────────────────────────────────────
 function log(msg) {
   const line = document.createElement("div");
@@ -112,6 +146,7 @@ startBtn.addEventListener("click", async () => {
   }
   const { job_id } = await res.json();
   currentJobId = job_id;
+  startTimer();
   streamProgress(job_id);
 });
 
@@ -130,20 +165,29 @@ function streamProgress(jobId) {
         setStage(stageNum, isDone);
       }
     }
+
+    // Update estimated remaining from log line "Estimated remaining time: Xm Ys"
+    const estMatch = msg.match(/Estimated remaining time:\s*(.+)/);
+    if (estMatch) {
+      document.getElementById("timer-remaining").textContent = estMatch[1].trim();
+    }
   });
 
   es.addEventListener("complete", e => {
     let info = {};
     try { info = JSON.parse(e.data); } catch (_) {}
-    // Mark all stages done
     for (let i = 1; i <= 5; i++) setStage(i, true);
-    log("✅ Complete — " + (info.location_count || 0) + " locations found.");
+    stopTimer();
+    const elapsed = jobStartTime ? fmtSecs((Date.now() - jobStartTime) / 1000) : "";
+    document.getElementById("timer-remaining").textContent = "done";
+    log("✅ Complete — " + (info.location_count || 0) + " locations found" + (elapsed ? " in " + elapsed : "") + ".");
     es.close();
     fetchAndShowResults(jobId);
     startBtn.disabled = false;
   });
 
   es.addEventListener("error", e => {
+    stopTimer();
     log("❌ Error: " + (e.data || "processing failed"));
     es.close();
     startBtn.disabled = false;

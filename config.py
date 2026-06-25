@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.10"
+    APP_VERSION: str = "1.0.11"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [

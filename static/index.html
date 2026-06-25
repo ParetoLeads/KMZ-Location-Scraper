@@ -167,6 +167,32 @@
     .stage.active .stage-label { color: var(--orange); font-weight: 600; }
     .stage.done .stage-label { color: var(--muted); }
 
+    /* ── Timer bar ── */
+    .timer-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.6rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.82rem;
+    }
+    .timer-bar .timer-item { display: flex; align-items: center; gap: 0.45rem; }
+    .timer-bar .timer-label { color: var(--muted); font-weight: 500; }
+    .timer-bar .timer-val { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+    .timer-bar .timer-est { color: var(--orange); font-weight: 700; font-variant-numeric: tabular-nums; }
+    .timer-pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--orange);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.75); }
+    }
+
     /* ── Log ── */
     #log {
       background: #0D1117;
@@ -284,6 +310,17 @@
         <div class="stage" id="stage-5"><div class="stage-dot">5</div><div class="stage-label">Export Excel</div></div>
       </div>
 
+      <div class="timer-bar" id="timer-bar">
+        <div class="timer-item">
+          <div class="timer-pulse" id="timer-pulse"></div>
+          <span class="timer-label">Elapsed</span>
+          <span class="timer-val" id="timer-elapsed">0:00</span>
+        </div>
+        <div class="timer-item">
+          <span class="timer-label">Est. remaining</span>
+          <span class="timer-est" id="timer-remaining">—</span>
+        </div>
+      </div>
       <div id="log"></div>
     </div>
 

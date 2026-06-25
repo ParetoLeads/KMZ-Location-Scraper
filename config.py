@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.18"
+    APP_VERSION: str = "1.0.19"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [
@@ -71,7 +71,7 @@ class Config:
     
     # Gemini Settings
     USE_GEMINI: bool = os.getenv('USE_GEMINI', 'True').lower() == 'true'
-    GEMINI_MODEL: str = os.getenv('GEMINI_MODEL', 'gemini-2.5-pro')  # Updated to gemini-2.5-pro
+    GEMINI_MODEL: str = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
     GEMINI_TEMPERATURE: float = float(os.getenv('GEMINI_TEMPERATURE', '0.2'))
     GEMINI_TOP_P: float = float(os.getenv('GEMINI_TOP_P', '0.95'))
     GEMINI_TOP_K: int = int(os.getenv('GEMINI_TOP_K', '40'))

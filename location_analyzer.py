@@ -932,10 +932,11 @@ class LocationAnalyzer:
             "- 'index': An identifier for the location within the overall list (starting from {start_index}).\n"
             "- 'name': The official name of the specific location.\n"
             "- 'type': The type of the location (e.g., city, suburb, neighbourhood).\n"
-            "- 'parent_name': The name of the administrative area directly containing the location.\n"
-            "- 'level_4_name': The name of the higher-level administrative area (e.g., province or state).\n"
-            "- 'level_2_name': The name of the country.\n\n"
-            "**Crucially, use the provided 'type', 'parent_name', 'level_4_name', and 'level_2_name' to disambiguate the location 'name' "
+            "- 'city': The city or municipality that contains this location.\n"
+            "- 'county': The county or parish containing this location.\n"
+            "- 'state': The state or province containing this location.\n"
+            "- 'country': The country.\n\n"
+            "**Crucially, use ALL provided fields to disambiguate the location 'name' "
             "and ensure you are retrieving data for the correct place.**\n\n"
             "Provide your answer ONLY as a single, valid JSON **array**. Each object in the array must correspond to one location from the input list below, respecting the original order.\n"
             "Do not include any introductory text, explanations, or summaries before or after the JSON array.\n"
@@ -972,9 +973,10 @@ class LocationAnalyzer:
                 "index": original_index,
                 "name": loc.get('name', 'Unknown'),
                 "type": loc.get('type', 'unknown'),
-                "parent_name": admin_hierarchy.get('parent_name'),
-                "level_4_name": admin_hierarchy.get('level_4_name'),
-                "level_2_name": admin_hierarchy.get('level_2_name')
+                "city": admin_hierarchy.get('level_8_name') or admin_hierarchy.get('parent_name'),
+                "county": admin_hierarchy.get('level_6_name'),
+                "state": admin_hierarchy.get('level_4_name'),
+                "country": admin_hierarchy.get('level_2_name'),
             }
             locations_data.append(location_info)
 
@@ -1126,6 +1128,7 @@ class LocationAnalyzer:
                 "top_p": config.GEMINI_TOP_P,
                 "top_k": config.GEMINI_TOP_K,
                 "max_output_tokens": config.GEMINI_MAX_OUTPUT_TOKENS,
+                "response_mime_type": "application/json",
             }
             
             response = self.gemini_model.generate_content(

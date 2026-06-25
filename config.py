@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.24"
+    APP_VERSION: str = "1.0.25"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [
@@ -45,7 +45,7 @@ class Config:
     DEFAULT_MAX_RETRIES: int = 3  # Legacy default (kept for compatibility)
     
     # Processing Settings
-    DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '30'))
+    DEFAULT_CHUNK_SIZE: int = int(os.getenv('DEFAULT_CHUNK_SIZE', '50'))
     DEFAULT_BATCH_SIZE: int = 10   # Hierarchy batch size
     HIERARCHY_FIRST_BATCH_SIZE: int = 5   # First hierarchy batch size (fail-fast probe)
     HIERARCHY_QUERY_TIMEOUT: int = 20   # query-level timeout; HTTP timeout = this + HIERARCHY_TIMEOUT_BUFFER
@@ -80,13 +80,13 @@ class Config:
     GEMINI_MIN_SPACING_SECONDS: int = int(os.getenv('GEMINI_MIN_SPACING_SECONDS', '0'))
 
     # Parallelism: number of AI batches to run concurrently (Stage 4)
-    PARALLEL_AI_BATCHES: int = int(os.getenv('PARALLEL_AI_BATCHES', '3'))
+    PARALLEL_AI_BATCHES: int = int(os.getenv('PARALLEL_AI_BATCHES', '6'))
 
     # Stage 3 hierarchy method:
     #   'batch'   — current per-batch centroid is_in queries (default, proven)
     #   'bbox'    — single bounding-box query + local shapely point-in-polygon (fast, experimental)
     #   'compare' — runs both and logs speed/coverage/accuracy comparison (for A/B testing)
-    HIERARCHY_METHOD: str = os.getenv('HIERARCHY_METHOD', 'batch')
+    HIERARCHY_METHOD: str = os.getenv('HIERARCHY_METHOD', 'bbox')
     
     # UI Settings
     MAX_FILE_SIZE_MB: int = int(os.getenv('MAX_FILE_SIZE_MB', '1'))

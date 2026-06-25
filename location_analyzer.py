@@ -160,10 +160,9 @@ class LocationAnalyzer:
     def _estimate_processing_time(self, num_locations: int, hierarchy_completed: int = 0, gpt_completed: int = 0) -> str:
         """Estimate remaining processing time based on empirical timing data.
 
-        Calibrated from 5 real runs (83–377 locations):
-          Stage 2 (OSM discovery):  ~150s fixed  (mostly query overhead, not location-dependent)
-          Stage 3 (hierarchy):       37s/batch of 10 + 87s fixed overhead
-          Stage 4 (AI population):   70s/batch of 30  (only when AI keys are present)
+        Calibrated from v1.0.15 run (154 locations, mail.ru primary + parallel AI):
+          Stage 3 (hierarchy):  ~2s/batch of 10  (mail.ru responds in <1s)
+          Stage 4 (AI):         ~40s/batch of 30 (GPT + Gemini in parallel)
         """
         hierarchy_batch_size = config.DEFAULT_BATCH_SIZE  # 10
         ai_batch_size = config.DEFAULT_CHUNK_SIZE          # 30
@@ -174,16 +173,12 @@ class LocationAnalyzer:
         hierarchy_remaining = max(0, total_hierarchy_batches - hierarchy_completed)
         ai_remaining = max(0, total_ai_batches - gpt_completed)
 
-        # Stage 3: 37s per batch + 87s fixed (amortised across remaining batches)
-        if total_hierarchy_batches > 0:
-            fixed_per_remaining = 87 * hierarchy_remaining / total_hierarchy_batches
-        else:
-            fixed_per_remaining = 0
-        hierarchy_time = hierarchy_remaining * 37 + fixed_per_remaining
+        # Stage 3: ~2s per batch (mail.ru as primary, near-instant responses)
+        hierarchy_time = hierarchy_remaining * 2
 
         # Stage 4: only if AI is actually enabled
         ai_enabled = self.use_gpt and (self.use_openai or self.use_gemini_flag or not self._ai_clients_initialized)
-        ai_time = ai_remaining * 70 if ai_enabled else 0
+        ai_time = ai_remaining * 40 if ai_enabled else 0
 
         total_seconds = int(hierarchy_time + ai_time)
 

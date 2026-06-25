@@ -10,7 +10,7 @@ from typing import List
 class Config:
     """Centralized configuration for the application."""
 
-    APP_VERSION: str = "1.0.20"
+    APP_VERSION: str = "1.0.21"
 
     # Place Types
     PRIMARY_PLACE_TYPES: List[str] = [
@@ -76,8 +76,11 @@ class Config:
     GEMINI_TOP_P: float = float(os.getenv('GEMINI_TOP_P', '0.95'))
     GEMINI_TOP_K: int = int(os.getenv('GEMINI_TOP_K', '40'))
     GEMINI_MAX_OUTPUT_TOKENS: int = int(os.getenv('GEMINI_MAX_OUTPUT_TOKENS', '8192'))
-    # Rate limit: Tier 1 paid ≈ 150–300 RPM. Use 2s min spacing (30 RPM) to stay well under limit.
-    GEMINI_MIN_SPACING_SECONDS: int = 2
+    # Flash paid tier supports 1000 RPM — no spacing needed between requests.
+    GEMINI_MIN_SPACING_SECONDS: int = int(os.getenv('GEMINI_MIN_SPACING_SECONDS', '0'))
+
+    # Parallelism: number of AI batches to run concurrently (Stage 4)
+    PARALLEL_AI_BATCHES: int = int(os.getenv('PARALLEL_AI_BATCHES', '3'))
     
     # UI Settings
     MAX_FILE_SIZE_MB: int = int(os.getenv('MAX_FILE_SIZE_MB', '1'))

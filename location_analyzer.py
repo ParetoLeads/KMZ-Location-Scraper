@@ -37,8 +37,10 @@ OVERPASS_FALLBACK_URLS = [
 ]
 OVERPASS_FALLBACK_URL = OVERPASS_FALLBACK_URLS[0]  # kept for hierarchy function compatibility
 
-# Last time a Gemini API request was sent (for rate-limit spacing across batches/instances)
+# Gemini rate-limit state — shared across threads, protected by _gemini_lock
+import threading as _threading
 _last_gemini_request_time: float = 0.0
+_gemini_lock = _threading.Lock()
 
 class LocationAnalyzer:
     def __init__(self, kmz_file: str, output_excel: str = None, 
@@ -944,18 +946,13 @@ class LocationAnalyzer:
         """Sends a batch of locations to Gemini and parses the JSON array response.
         Enforces Gemini API rate limits (e.g. 5 RPM for 2.5 Pro) via min spacing between requests."""
         global _last_gemini_request_time
-        min_spacing = getattr(config, 'GEMINI_MIN_SPACING_SECONDS', 12)
-        now = time.time()
-        if _last_gemini_request_time > 0:
-            elapsed = now - _last_gemini_request_time
-            if elapsed < min_spacing:
-                sleep_time = min_spacing - elapsed
-                try:
-                    self.status_callback(f"Gemini rate limit: waiting {sleep_time:.0f}s before next request.")
-                except Exception:
-                    pass
-                time.sleep(sleep_time)
-        _last_gemini_request_time = time.time()
+        min_spacing = getattr(config, 'GEMINI_MIN_SPACING_SECONDS', 0)
+        with _gemini_lock:
+            if min_spacing > 0 and _last_gemini_request_time > 0:
+                elapsed = time.time() - _last_gemini_request_time
+                if elapsed < min_spacing:
+                    time.sleep(min_spacing - elapsed)
+            _last_gemini_request_time = time.time()
 
         prompt = self._prepare_batch_gpt_prompt(locations_chunk, start_index)
         
@@ -1199,88 +1196,89 @@ class LocationAnalyzer:
             num_batches = ceil(len(locations) / self.chunk_size)
             estimate_batch_size = 10
             gpt_batches_per_estimate_batch = estimate_batch_size / self.chunk_size
-            
-            for i in range(num_batches):
-                start_index = i * self.chunk_size
-                end_index = start_index + self.chunk_size
-                batch_locations = locations[start_index:end_index]
-                
-                self._log(f"  Calculating population for batch {i+1}/{num_batches} ({len(batch_locations)} locations, {start_index}-{min(end_index, len(locations))-1})...")
+            parallel_ai = config.PARALLEL_AI_BATCHES
 
-                try:
-                    gpt_results_map = {}
-                    gemini_results_map = {}
+            def _run_single_batch(batch_idx):
+                s = batch_idx * self.chunk_size
+                e = min(s + self.chunk_size, len(locations))
+                batch_locs = locations[s:e]
+                self._log(f"  Calculating population for batch {batch_idx+1}/{num_batches} ({len(batch_locs)} locations, {s}-{e-1})...")
+                gpt_map, gem_map = {}, {}
+                if use_openai and use_gemini:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as inner:
+                        gf = inner.submit(self._get_gpt_populations_batch, batch_locs, s)
+                        gg = inner.submit(self._get_gemini_populations_batch, batch_locs, s)
+                        gpt_map = gf.result()
+                        gem_map = gg.result()
+                else:
+                    if use_openai:
+                        gpt_map = self._get_gpt_populations_batch(batch_locs, s)
+                    if use_gemini:
+                        gem_map = self._get_gemini_populations_batch(batch_locs, s)
+                return batch_idx, gpt_map, gem_map, s, e
 
-                    if use_openai and use_gemini:
-                        # Parallel: GPT and Gemini run concurrently
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                            gpt_future = executor.submit(self._get_gpt_populations_batch, batch_locations, start_index)
-                            gemini_future = executor.submit(self._get_gemini_populations_batch, batch_locations, start_index)
-                            gpt_results_map = gpt_future.result()
-                            gemini_results_map = gemini_future.result()
-                    else:
-                        if use_openai:
-                            gpt_results_map = self._get_gpt_populations_batch(batch_locations, start_index)
-                        if use_gemini:
-                            gemini_results_map = self._get_gemini_populations_batch(batch_locations, start_index)
-                    
-                    # Store GPT results
-                    success_count = 0
-                    for original_idx, result_data in gpt_results_map.items():
-                        if 0 <= original_idx < len(locations):
-                            locations[original_idx]["gpt_population"] = result_data.get("population")
-                            locations[original_idx]["gpt_confidence"] = result_data.get("confidence")
-                            gpt_local = result_data.get("local_names", [])
-                            if gpt_local:
-                                locations[original_idx]["local_names"] = gpt_local
-                            if result_data.get("population") is not None:
-                                success_count += 1
-                    
-                    # Store Gemini results
-                    gemini_success_count = 0
-                    for original_idx, result_data in gemini_results_map.items():
-                        if 0 <= original_idx < len(locations):
-                            locations[original_idx]["gemini_population"] = result_data.get("population")
-                            locations[original_idx]["gemini_confidence"] = result_data.get("confidence")
-                            gemini_local = result_data.get("local_names", [])
-                            if gemini_local:
-                                existing = locations[original_idx].get("local_names", [])
-                                existing_lower = {n.lower() for n in existing}
-                                merged = list(existing)
-                                for n in gemini_local:
-                                    if n.lower() not in existing_lower:
-                                        merged.append(n)
-                                        existing_lower.add(n.lower())
-                                locations[original_idx]["local_names"] = merged
-                            if result_data.get("population") is not None:
-                                gemini_success_count += 1
-                    
-                    # Update success count message
-                    if use_openai and use_gemini:
-                        total_success = len([idx for idx in range(start_index, min(end_index, len(locations))) 
-                                            if (locations[idx].get("gpt_population") is not None) or 
-                                               (locations[idx].get("gemini_population") is not None)])
-                        self._log(f"  Batch {i+1}/{num_batches} complete: GPT={success_count}, Gemini={gemini_success_count}, Total={total_success}/{len(batch_locations)} locations got population data")
-                    else:
-                        self._log(f"  Batch {i+1}/{num_batches} complete: {success_count}/{len(batch_locations)} locations got population data")
-                    
-                    # Calculate completed estimate batches
-                    total_estimate_batches = ceil(len(locations) / estimate_batch_size)
-                    hierarchy_completed = total_estimate_batches
-                    gpt_completed_estimate_batches = ceil((i + 1) / gpt_batches_per_estimate_batch)
-                    estimated_time = self._estimate_processing_time(len(locations), hierarchy_completed, gpt_completed_estimate_batches)
-                    self._log(f"Estimated remaining time: {estimated_time}")
-                except Exception as e:
-                    error_traceback = traceback.format_exc()
-                    self._log(f"ERROR: Error processing AI batch {i+1}: {str(e)}")
-                    self._log(f"ERROR: Full traceback:\n{error_traceback}")
-                    for idx in range(start_index, min(end_index, len(locations))):
-                         if 0 <= idx < len(locations):
-                            locations[idx]["gpt_confidence"] = "Error"
+            completed_count = 0
+            with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_ai) as outer:
+                batch_futures = {outer.submit(_run_single_batch, i): i for i in range(num_batches)}
+                for future in concurrent.futures.as_completed(batch_futures):
+                    try:
+                        batch_idx, gpt_results_map, gemini_results_map, start_index, end_index = future.result()
+                        completed_count += 1
 
-                # Delay between batches to avoid rate limiting
-                if i < num_batches - 1:  # Don't sleep after last batch
-                    time.sleep(config.GPT_BATCH_DELAY)
+                        # Store GPT results — each batch writes to non-overlapping indices, no lock needed
+                        success_count = 0
+                        for original_idx, result_data in gpt_results_map.items():
+                            if 0 <= original_idx < len(locations):
+                                locations[original_idx]["gpt_population"] = result_data.get("population")
+                                locations[original_idx]["gpt_confidence"] = result_data.get("confidence")
+                                gpt_local = result_data.get("local_names", [])
+                                if gpt_local:
+                                    locations[original_idx]["local_names"] = gpt_local
+                                if result_data.get("population") is not None:
+                                    success_count += 1
+
+                        # Store Gemini results
+                        gemini_success_count = 0
+                        for original_idx, result_data in gemini_results_map.items():
+                            if 0 <= original_idx < len(locations):
+                                locations[original_idx]["gemini_population"] = result_data.get("population")
+                                locations[original_idx]["gemini_confidence"] = result_data.get("confidence")
+                                gemini_local = result_data.get("local_names", [])
+                                if gemini_local:
+                                    existing = locations[original_idx].get("local_names", [])
+                                    existing_lower = {n.lower() for n in existing}
+                                    merged = list(existing)
+                                    for n in gemini_local:
+                                        if n.lower() not in existing_lower:
+                                            merged.append(n)
+                                            existing_lower.add(n.lower())
+                                    locations[original_idx]["local_names"] = merged
+                                if result_data.get("population") is not None:
+                                    gemini_success_count += 1
+
+                        if use_openai and use_gemini:
+                            total_success = len([idx for idx in range(start_index, min(end_index, len(locations)))
+                                                if locations[idx].get("gpt_population") is not None
+                                                or locations[idx].get("gemini_population") is not None])
+                            self._log(f"  Batch {batch_idx+1}/{num_batches} complete: GPT={success_count}, Gemini={gemini_success_count}, Total={total_success}/{end_index-start_index} locations got population data")
+                        else:
+                            self._log(f"  Batch {batch_idx+1}/{num_batches} complete: {success_count}/{end_index-start_index} locations got population data")
+
+                        total_estimate_batches = ceil(len(locations) / estimate_batch_size)
+                        gpt_completed_estimate_batches = ceil(completed_count / gpt_batches_per_estimate_batch)
+                        estimated_time = self._estimate_processing_time(len(locations), total_estimate_batches, gpt_completed_estimate_batches)
+                        self._log(f"Estimated remaining time: {estimated_time}")
+
+                    except Exception as e:
+                        bi = batch_futures[future]
+                        s = bi * self.chunk_size
+                        e_idx = min(s + self.chunk_size, len(locations))
+                        self._log(f"ERROR: Error processing AI batch {bi+1}: {str(e)}")
+                        self._log(f"ERROR: Full traceback:\n{traceback.format_exc()}")
+                        for idx in range(s, e_idx):
+                            if 0 <= idx < len(locations):
+                                locations[idx]["gpt_confidence"] = "Error"
+                        completed_count += 1
 
             self._log("<<< Stage: Finished fetching AI population data.")
         else:

@@ -3,78 +3,326 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>KMZ Location Scraper</title>
+  <title>KMZ Location Scraper · Paretoleads</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
+    :root {
+      --orange: #F26522;
+      --orange-hover: #d4551b;
+      --orange-light: #FFF4EE;
+      --orange-border: #FBD0B5;
+      --bg: #F4F5F8;
+      --card: #ffffff;
+      --border: #E4E7ED;
+      --text: #18191F;
+      --muted: #6B7280;
+      --radius: 12px;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: system-ui, sans-serif; background: #f5f7fa; color: #222; }
-    header { background: #1f77b4; color: white; padding: 1.2rem 2rem; }
-    header h1 { font-size: 1.6rem; }
-    header p { font-size: 0.85rem; opacity: 0.85; margin-top: 0.2rem; }
-    main { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
-    .card { background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.1); margin-bottom: 1.5rem; }
-    #upload-area { border: 2px dashed #ccc; border-radius: 8px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color .2s; }
-    #upload-area.drag-over { border-color: #1f77b4; background: #eef5fc; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Header ── */
+    header {
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    header img.logo { height: 32px; }
+    .tool-badge {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--orange);
+      background: var(--orange-light);
+      border: 1px solid var(--orange-border);
+      border-radius: 20px;
+      padding: 4px 12px;
+      letter-spacing: 0.01em;
+    }
+
+    /* ── Layout ── */
+    main { max-width: 1080px; margin: 2rem auto; padding: 0 1.5rem; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 1.75rem;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,.05);
+      margin-bottom: 1.25rem;
+    }
+    .card-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* ── Upload ── */
+    #upload-area {
+      border: 2px dashed #D1D5DB;
+      border-radius: 10px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      background: #FAFBFC;
+    }
+    #upload-area:hover, #upload-area.drag-over {
+      border-color: var(--orange);
+      background: var(--orange-light);
+    }
+    #upload-area .upload-icon { font-size: 2.25rem; margin-bottom: 0.75rem; }
+    #upload-area strong { font-size: 0.95rem; }
+    #upload-area .hint { color: var(--muted); font-size: 0.83rem; margin-top: 0.3rem; }
     #file-input { display: none; }
-    #start-btn { margin-top: 1rem; background: #1f77b4; color: white; border: none; padding: 0.7rem 2rem; border-radius: 6px; font-size: 1rem; cursor: pointer; }
-    #start-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    #progress-section { display: none; }
-    #log { background: #111; color: #0f0; font-family: monospace; font-size: 0.78rem; height: 200px; overflow-y: auto; padding: 0.8rem; border-radius: 6px; }
-    #map { height: 400px; border-radius: 8px; }
-    #results-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    #results-table th { background: #1f77b4; color: white; padding: 0.5rem; text-align: left; }
-    #results-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #eee; }
-    #download-btn { display: none; background: #FF5733; color: white; border: none; padding: 0.7rem 2rem; border-radius: 6px; font-size: 1rem; cursor: pointer; margin-top: 1rem; }
-    .stats { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .stat { background: #f0f4f8; border-radius: 6px; padding: 0.7rem 1rem; flex: 1; text-align: center; min-width: 120px; }
-    .stat strong { display: block; font-size: 1.6rem; color: #1f77b4; }
-    .stat span { font-size: 0.8rem; color: #666; }
-    #search-input { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #ccc; border-radius: 6px; font-size: 0.9rem; margin-bottom: 0.75rem; }
-    .table-wrap { overflow-x: auto; margin-top: 1rem; }
-    footer { text-align: center; color: #888; padding: 2rem; font-size: 0.8rem; }
+    #file-name {
+      display: none;
+      margin-top: 0.875rem;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--orange);
+      background: var(--orange-light);
+      border: 1px solid var(--orange-border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      display: none;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.6rem 1.4rem;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s, opacity .15s;
+    }
+    .btn-orange { background: var(--orange); color: white; }
+    .btn-orange:hover { background: var(--orange-hover); }
+    .btn-orange:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-green { background: #16A34A; color: white; }
+    .btn-green:hover { background: #15803D; }
+    #start-btn { margin-top: 1.25rem; }
+    #download-btn { margin-bottom: 1.25rem; }
+
+    /* ── Stage Tracker ── */
+    .stages {
+      display: flex;
+      align-items: flex-start;
+      margin-bottom: 1.5rem;
+    }
+    .stage { flex: 1; display: flex; flex-direction: column; align-items: center; position: relative; }
+    .stage:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 15px; left: calc(50% + 16px);
+      right: calc(-50% + 16px);
+      height: 2px;
+      background: #E5E7EB;
+      z-index: 0;
+    }
+    .stage.done:not(:last-child)::after { background: var(--orange); transition: background .3s; }
+    .stage-dot {
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: 2px solid #D1D5DB;
+      background: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.72rem; font-weight: 700;
+      color: #9CA3AF;
+      position: relative; z-index: 1;
+      transition: all .25s;
+    }
+    .stage.active .stage-dot {
+      border-color: var(--orange); color: var(--orange);
+      box-shadow: 0 0 0 4px var(--orange-light);
+    }
+    .stage.done .stage-dot {
+      background: var(--orange); border-color: var(--orange); color: white;
+    }
+    .stage-label {
+      margin-top: 0.45rem;
+      font-size: 0.68rem; font-weight: 500;
+      color: #9CA3AF; text-align: center;
+      line-height: 1.3; max-width: 80px;
+    }
+    .stage.active .stage-label { color: var(--orange); font-weight: 600; }
+    .stage.done .stage-label { color: var(--muted); }
+
+    /* ── Log ── */
+    #log {
+      background: #0D1117;
+      color: #C9D1D9;
+      font-family: 'Menlo', 'Consolas', monospace;
+      font-size: 0.73rem;
+      height: 170px;
+      overflow-y: auto;
+      padding: 0.875rem 1rem;
+      border-radius: 8px;
+      line-height: 1.65;
+    }
+    #log .ln-checkpoint { color: #58A6FF; }
+    #log .ln-warn { color: #F0883E; }
+    #log .ln-err { color: #FF7B72; }
+    #log .ln-ok { color: #3FB950; }
+
+    /* ── Stats ── */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+    }
+    .stat {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.1rem 1rem;
+      text-align: center;
+      background: var(--bg);
+    }
+    .stat strong { display: block; font-size: 2rem; font-weight: 700; color: var(--orange); line-height: 1; margin-bottom: 4px; }
+    .stat span { font-size: 0.75rem; color: var(--muted); font-weight: 500; }
+
+    /* ── Map ── */
+    #map {
+      height: 360px;
+      border-radius: 10px;
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    /* ── Table ── */
+    #search-input {
+      width: 100%;
+      padding: 0.55rem 0.875rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      margin-bottom: 0.875rem;
+      background: var(--bg);
+      font-family: inherit;
+      color: var(--text);
+    }
+    #search-input:focus { outline: none; border-color: var(--orange); }
+    .table-wrap { overflow-x: auto; }
+    #results-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    #results-table th {
+      background: var(--orange);
+      color: white;
+      padding: 0.55rem 0.75rem;
+      text-align: left;
+      font-weight: 600;
+      white-space: nowrap;
+      font-size: 0.75rem;
+    }
+    #results-table td { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    #results-table tr:hover td { background: var(--orange-light); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
+    .b-high   { background: #DCFCE7; color: #166534; }
+    .b-medium { background: #FEF9C3; color: #854D0E; }
+    .b-low    { background: #FEE2E2; color: #991B1B; }
+    .b-type   { background: #EDE9FE; color: #5B21B6; }
+    .local-names { color: var(--muted); font-size: 0.72rem; max-width: 200px; }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center; padding: 2.5rem 1rem;
+      font-size: 0.78rem; color: var(--muted);
+      border-top: 1px solid var(--border);
+      margin-top: 1rem;
+    }
+    footer img { height: 18px; vertical-align: middle; opacity: 0.7; margin-right: 6px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>🗺️ KMZ Location Scraper</h1>
-    <p>Extract locations from KMZ files and estimate populations using OpenStreetMap and AI</p>
+    <img src="/logo.png" alt="Paretoleads" class="logo" />
+    <span class="tool-badge">KMZ Location Scraper</span>
   </header>
+
   <main>
+    <!-- Upload -->
     <div class="card">
       <div id="upload-area">
-        <p>Drag &amp; drop a <strong>.kmz</strong> file here, or click to select</p>
+        <div class="upload-icon">📂</div>
+        <strong>Drop a .kmz file here</strong>
+        <p class="hint">or click to browse your files</p>
         <input type="file" id="file-input" accept=".kmz" />
-        <br/>
-        <button id="start-btn" disabled>🚀 Start Analysis</button>
       </div>
+      <div id="file-name"></div>
+      <button class="btn btn-orange" id="start-btn" disabled>▶&nbsp; Run Analysis</button>
     </div>
 
-    <div class="card" id="progress-section">
-      <h2 style="margin-bottom:0.75rem">Progress</h2>
+    <!-- Progress -->
+    <div class="card" id="progress-section" style="display:none">
+      <p class="card-title">⚙️ Processing</p>
+
+      <div class="stages">
+        <div class="stage" id="stage-1"><div class="stage-dot">1</div><div class="stage-label">Parse KMZ</div></div>
+        <div class="stage" id="stage-2"><div class="stage-dot">2</div><div class="stage-label">Find Locations</div></div>
+        <div class="stage" id="stage-3"><div class="stage-dot">3</div><div class="stage-label">Hierarchy</div></div>
+        <div class="stage" id="stage-4"><div class="stage-dot">4</div><div class="stage-label">AI Population</div></div>
+        <div class="stage" id="stage-5"><div class="stage-dot">5</div><div class="stage-label">Export Excel</div></div>
+      </div>
+
       <div id="log"></div>
     </div>
 
+    <!-- Results -->
     <div class="card" id="results-section" style="display:none">
       <div class="stats">
-        <div class="stat"><strong id="stat-total">—</strong><span>Total</span></div>
+        <div class="stat"><strong id="stat-total">—</strong><span>Locations Found</span></div>
         <div class="stat"><strong id="stat-with-pop">—</strong><span>With Population</span></div>
         <div class="stat"><strong id="stat-over-10k">—</strong><span>Population &gt; 10K</span></div>
       </div>
+
       <div id="map"></div>
-      <button id="download-btn">📥 Download Excel</button>
+
+      <button class="btn btn-green" id="download-btn" style="display:none">⬇&nbsp; Download Excel</button>
+
       <div class="table-wrap">
-        <input type="text" id="search-input" placeholder="Search by name…" />
+        <input type="text" id="search-input" placeholder="Search locations by name…" />
         <table id="results-table">
           <thead><tr>
-            <th>Name</th><th>Type</th><th>Lat</th><th>Lon</th>
-            <th>GPT Pop</th><th>Gemini Pop</th><th>Combined Pop</th><th>Confidence</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>City</th>
+            <th>County</th>
+            <th>State</th>
+            <th>Population</th>
+            <th>Confidence</th>
+            <th>Local Search Names</th>
           </tr></thead>
           <tbody id="results-body"></tbody>
         </table>
       </div>
     </div>
   </main>
-  <footer>Built with FastAPI &amp; OpenStreetMap · Developed by Paretoleads.com</footer>
+
+  <footer>
+    <img src="/logo.png" alt="Paretoleads" />
+    Powered by OpenStreetMap &amp; AI
+  </footer>
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/app.js"></script>
 </body>

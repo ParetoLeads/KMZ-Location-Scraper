@@ -8,7 +8,7 @@ from fastapi.responses import Response, FileResponse
 from sse_starlette.sse import EventSourceResponse
 from server.job_store import (
     create_job, get_job, append_event, list_completed_jobs,
-    persist_job_meta, RESULTS_DIR,
+    persist_job_meta, get_job_logs, RESULTS_DIR,
 )
 
 router = APIRouter()
@@ -147,6 +147,31 @@ def locations(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"locations": job.locations or []}
+
+
+@router.get("/api/logs/{job_id}")
+def logs(job_id: str):
+    """Return full log lines for a job — works even after container restart."""
+    job = get_job(job_id)
+    if job is None:
+        from server.job_store import RUNS_DIR
+        import os as _os
+        if not _os.path.exists(_os.path.join(RUNS_DIR, f"{job_id}.json")):
+            raise HTTPException(status_code=404, detail="Job not found")
+    log_lines = get_job_logs(job_id)
+    meta = {}
+    if job:
+        duration = None
+        if job.created_at and job.completed_at:
+            duration = round(job.completed_at - job.created_at, 1)
+        meta = {
+            "job_id": job_id,
+            "filename": job.filename,
+            "status": job.status,
+            "location_count": job.location_count,
+            "duration_seconds": duration,
+        }
+    return {**meta, "log_count": len(log_lines), "logs": log_lines}
 
 
 @router.get("/api/runs")

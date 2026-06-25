@@ -159,41 +159,31 @@ class LocationAnalyzer:
         if self.verbose:
             self.status_callback(timestamped_message)
     
-    def _estimate_processing_time(self, num_locations: int, hierarchy_completed: int = 0, gpt_completed: int = 0) -> str:
-        """Estimate remaining processing time based on empirical timing data.
-
-        Calibrated from v1.0.15 run (154 locations, mail.ru primary + parallel AI):
-          Stage 3 (hierarchy):  ~2s/batch of 10  (mail.ru responds in <1s)
-          Stage 4 (AI):         ~40s/batch of 30 (GPT + Gemini in parallel)
-        """
-        hierarchy_batch_size = config.DEFAULT_BATCH_SIZE  # 10
-        ai_batch_size = config.DEFAULT_CHUNK_SIZE          # 30
-
-        total_hierarchy_batches = ceil(num_locations / hierarchy_batch_size)
-        total_ai_batches = ceil(num_locations / ai_batch_size)
-
-        hierarchy_remaining = max(0, total_hierarchy_batches - hierarchy_completed)
-        ai_remaining = max(0, total_ai_batches - gpt_completed)
-
-        # Stage 3: ~2s per batch (mail.ru as primary, near-instant responses)
-        hierarchy_time = hierarchy_remaining * 2
-
-        # Stage 4: only if AI is actually enabled
-        ai_enabled = self.use_gpt and (self.use_openai or self.use_gemini_flag or not self._ai_clients_initialized)
-        ai_time = ai_remaining * 40 if ai_enabled else 0
-
-        total_seconds = int(hierarchy_time + ai_time)
-
-        if total_seconds >= 3600:
-            h = total_seconds // 3600
-            m = (total_seconds % 3600) // 60
+    def _format_duration(self, seconds: int) -> str:
+        """Format a duration in seconds to a human-readable string."""
+        seconds = max(0, int(seconds))
+        if seconds >= 3600:
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
             return f"{h}h {m}m"
-        elif total_seconds >= 60:
-            m = total_seconds // 60
-            s = total_seconds % 60
+        elif seconds >= 60:
+            m = seconds // 60
+            s = seconds % 60
             return f"{m}m {s}s"
-        else:
-            return f"{total_seconds}s"
+        return f"{seconds}s"
+
+    def _estimate_initial_time(self, num_locations: int) -> str:
+        """Upfront estimate shown right after OSM discovery.
+        Empirical constants from v1.0.25 (bbox Stage 3 + 6-parallel AI, 50/batch):
+          Stage 3 bbox: ~20s flat
+          Stage 4:  ceil(ceil(n/50)/6) rounds × 35s/round
+        """
+        chunk = config.DEFAULT_CHUNK_SIZE
+        parallel = config.PARALLEL_AI_BATCHES
+        ai_rounds = ceil(ceil(num_locations / chunk) / parallel)
+        ai_enabled = self.use_gpt and (self.use_openai or self.use_gemini_flag or not self._ai_clients_initialized)
+        total = 20 + (ai_rounds * 35 if ai_enabled else 0)
+        return self._format_duration(total)
     
     def _generate_output_filename(self, kmz_file: str) -> str:
         """Generate output Excel filename based on KMZ filename."""
@@ -1361,8 +1351,6 @@ class LocationAnalyzer:
             self._log(f"\n>>> Stage: Calculating population estimates with {provider_str} in batches of {self.chunk_size}...")
             
             num_batches = ceil(len(locations) / self.chunk_size)
-            estimate_batch_size = 10
-            gpt_batches_per_estimate_batch = estimate_batch_size / self.chunk_size
             parallel_ai = config.PARALLEL_AI_BATCHES
 
             def _run_single_batch(batch_idx):
@@ -1385,6 +1373,7 @@ class LocationAnalyzer:
                 return batch_idx, gpt_map, gem_map, s, e
 
             completed_count = 0
+            stage4_start = time.time()
             with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_ai) as outer:
                 batch_futures = {outer.submit(_run_single_batch, i): i for i in range(num_batches)}
                 for future in concurrent.futures.as_completed(batch_futures):
@@ -1431,10 +1420,12 @@ class LocationAnalyzer:
                         else:
                             self._log(f"  Batch {batch_idx+1}/{num_batches} complete: {success_count}/{end_index-start_index} locations got population data")
 
-                        total_estimate_batches = ceil(len(locations) / estimate_batch_size)
-                        gpt_completed_estimate_batches = ceil(completed_count / gpt_batches_per_estimate_batch)
-                        estimated_time = self._estimate_processing_time(len(locations), total_estimate_batches, gpt_completed_estimate_batches)
-                        self._log(f"Estimated remaining time: {estimated_time}")
+                        elapsed = time.time() - stage4_start
+                        if completed_count > 0 and elapsed > 0:
+                            rate = completed_count / elapsed
+                            remaining = num_batches - completed_count
+                            eta = int(remaining / rate) if rate > 0 else 0
+                            self._log(f"Estimated remaining time: {self._format_duration(eta)}")
 
                     except Exception as e:
                         bi = batch_futures[future]
@@ -1812,8 +1803,7 @@ class LocationAnalyzer:
             self._log(f"Total unique OSM locations found: {len(all_locations)}")
             
             # Calculate and display initial time estimate
-            estimated_time = self._estimate_processing_time(len(all_locations), 0, 0)
-            self._log(f"Estimated remaining time: {estimated_time}")
+            self._log(f"Estimated remaining time: {self._estimate_initial_time(len(all_locations))}")
             
             # CHECKPOINT: Stage 3 - Administrative Boundaries
             self._log("CHECKPOINT: Stage 3 - Retrieving administrative boundaries started")
@@ -1905,8 +1895,12 @@ class LocationAnalyzer:
                     self._log(f"  Retrieving hierarchy batch {batch_num}/{total_batches} ({len(batch)} locations)...")
                     self.fetch_admin_hierarchy_batch(batch, timeout_sec=config.HIERARCHY_QUERY_TIMEOUT)
                     hierarchy_completed = batch_num
-                    estimated_time = self._estimate_processing_time(len(all_locations), hierarchy_completed, 0)
-                    self._log(f"Estimated remaining time: {estimated_time}")
+                    chunk = config.DEFAULT_CHUNK_SIZE
+                    parallel = config.PARALLEL_AI_BATCHES
+                    remaining_hier = (total_batches - hierarchy_completed) * 2
+                    ai_rounds = ceil(ceil(len(all_locations) / chunk) / parallel)
+                    est = remaining_hier + ai_rounds * 35
+                    self._log(f"Estimated remaining time: {self._format_duration(est)}")
                     if i + batch_size < len(all_locations):
                         time.sleep(config.HIERARCHY_BATCH_DELAY)
 

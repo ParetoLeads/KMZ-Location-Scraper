@@ -34,7 +34,7 @@ def create_job(job_id: str, filename: str = "") -> JobState:
 
 
 def persist_job_meta(job_id: str) -> None:
-    """Write job metadata to disk so it survives container restarts."""
+    """Write job metadata and logs to disk so they survive container restarts."""
     try:
         os.makedirs(RUNS_DIR, exist_ok=True)
         with _lock:
@@ -52,8 +52,29 @@ def persist_job_meta(job_id: str) -> None:
         }
         with open(os.path.join(RUNS_DIR, f"{job_id}.json"), "w") as f:
             json.dump(meta, f)
+        # Persist log lines separately so they survive restarts
+        log_lines = [e["data"] for e in job.events if e.get("type") == "progress"]
+        with open(os.path.join(RUNS_DIR, f"{job_id}_logs.json"), "w") as f:
+            json.dump(log_lines, f)
     except Exception:
         pass  # Never let persistence failure break the main flow
+
+
+def get_job_logs(job_id: str) -> list:
+    """Return log lines for a job. Prefers in-memory events; falls back to disk."""
+    with _lock:
+        job = _store.get(job_id)
+    if job and job.events:
+        return [e["data"] for e in job.events if e.get("type") == "progress"]
+    # Fall back to persisted logs
+    log_path = os.path.join(RUNS_DIR, f"{job_id}_logs.json")
+    if os.path.exists(log_path):
+        try:
+            with open(log_path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
 
 
 def list_completed_jobs() -> list:

@@ -1,8 +1,79 @@
 let currentJobId = null;
+let currentFilename = null;
 let map = null;
 let allLocations = [];
 let timerInterval = null;
 let jobStartTime = null;
+
+// ── Previous Runs (localStorage) ───────────────────────────────
+const RUNS_KEY = "kmz_runs";
+
+function loadLocalRuns() {
+  try { return JSON.parse(localStorage.getItem(RUNS_KEY) || "[]"); } catch { return []; }
+}
+
+function saveLocalRun(run) {
+  const runs = loadLocalRuns();
+  const idx = runs.findIndex(r => r.job_id === run.job_id);
+  if (idx >= 0) runs[idx] = { ...runs[idx], ...run };
+  else runs.unshift(run);
+  // Keep at most 50 runs
+  if (runs.length > 50) runs.splice(50);
+  try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs)); } catch {}
+}
+
+function fmtDate(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) +
+    " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+async function renderRunsTable() {
+  const container = document.getElementById("runs-content");
+  let localRuns = loadLocalRuns();
+  if (!localRuns.length) {
+    container.innerHTML = '<p class="runs-empty">No previous runs yet.</p>';
+    return;
+  }
+
+  // Check which job IDs the server still has (for download availability)
+  let serverIds = new Set();
+  try {
+    const res = await fetch("/api/runs");
+    if (res.ok) {
+      const data = await res.json();
+      (data.runs || []).forEach(r => serverIds.add(r.job_id));
+      // Merge server location counts into local runs
+      const serverMap = {};
+      (data.runs || []).forEach(r => { serverMap[r.job_id] = r; });
+      localRuns = localRuns.map(r => serverMap[r.job_id] ? { ...r, ...serverMap[r.job_id] } : r);
+    }
+  } catch {}
+
+  const rows = localRuns.map(r => {
+    const name = (r.filename || "unknown.kmz").replace(/\.kmz$/i, "");
+    const ts = fmtDate(r.completed_at);
+    const count = r.location_count != null ? r.location_count + " locations" : "—";
+    const canDownload = serverIds.has(r.job_id) && r.has_excel !== false;
+    const dlBtn = canDownload
+      ? `<button class="btn-dl" onclick="window.location.href='/api/download/${r.job_id}'">⬇ Excel</button>`
+      : `<span class="run-expired">Expired</span>`;
+    return `<tr>
+      <td class="run-name">${esc(name)}</td>
+      <td class="run-ts">${ts}</td>
+      <td>${count}</td>
+      <td>${dlBtn}</td>
+    </tr>`;
+  }).join("");
+
+  container.innerHTML = `<table id="runs-table">
+    <thead><tr><th>File</th><th>Completed</th><th>Locations</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function esc(s) { return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
 const fileInput    = document.getElementById("file-input");
 const startBtn     = document.getElementById("start-btn");
@@ -144,10 +215,14 @@ startBtn.addEventListener("click", async () => {
     startBtn.disabled = false;
     return;
   }
-  const { job_id } = await res.json();
-  currentJobId = job_id;
+  const data = await res.json();
+  currentJobId = data.job_id;
+  currentFilename = data.filename || file.name;
+  // Save stub to localStorage so it appears immediately
+  saveLocalRun({ job_id: data.job_id, filename: currentFilename, completed_at: null, location_count: null });
+  renderRunsTable();
   startTimer();
-  streamProgress(job_id);
+  streamProgress(data.job_id);
 });
 
 function streamProgress(jobId) {
@@ -181,6 +256,15 @@ function streamProgress(jobId) {
     const elapsed = jobStartTime ? fmtSecs((Date.now() - jobStartTime) / 1000) : "";
     document.getElementById("timer-remaining").textContent = "done";
     log("✅ Complete — " + (info.location_count || 0) + " locations found" + (elapsed ? " in " + elapsed : "") + ".");
+    // Record completed run
+    saveLocalRun({
+      job_id: jobId,
+      filename: currentFilename || jobId + ".kmz",
+      completed_at: Math.floor(Date.now() / 1000),
+      location_count: info.location_count || 0,
+      has_excel: (info.location_count || 0) > 0,
+    });
+    renderRunsTable();
     es.close();
     fetchAndShowResults(jobId);
     startBtn.disabled = false;
@@ -257,7 +341,6 @@ function renderTable(locs) {
   tbody.innerHTML = "";
 
   const fmt = n => (n != null && n !== "" && !isNaN(n)) ? Number(n).toLocaleString() : "—";
-  const esc = s => (s || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   locs.forEach(l => {
     const h    = l.admin_hierarchy || {};
@@ -285,3 +368,6 @@ searchInput.addEventListener("input", () => {
   const term = searchInput.value.toLowerCase();
   renderTable(term ? allLocations.filter(l => (l.name || "").toLowerCase().includes(term)) : allLocations);
 });
+
+// ── Init ───────────────────────────────────────────────────────
+renderRunsTable();

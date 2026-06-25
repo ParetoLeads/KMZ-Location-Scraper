@@ -6,12 +6,12 @@ import tempfile
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import Response
 from sse_starlette.sse import EventSourceResponse
-from server.job_store import create_job, get_job, append_event
+from server.job_store import create_job, get_job, append_event, list_completed_jobs
 
 router = APIRouter()
 
 
-def _run_analysis(job_id: str, kmz_path: str):
+def _run_analysis(job_id: str, kmz_path: str, filename: str = ""):
     from location_analyzer import LocationAnalyzer
     from config import config
 
@@ -44,6 +44,7 @@ def _run_analysis(job_id: str, kmz_path: str):
             progress_callback=on_progress,
             status_callback=on_progress,
         )
+        import time as _time
         locations = analyzer.run()
         if locations:
             excel_bio = analyzer.save_to_excel(locations)
@@ -51,9 +52,13 @@ def _run_analysis(job_id: str, kmz_path: str):
         else:
             job.result_excel = None
         job.locations = locations or []
+        job.location_count = len(job.locations)
+        job.completed_at = _time.time()
         job.status = "complete"
         append_event(job_id, {"type": "complete", "data": json.dumps({"location_count": len(job.locations)})})
     except Exception as e:
+        import time as _time
+        job.completed_at = _time.time()
         append_event(job_id, {"type": "error", "data": str(e)})
         job.status = "error"
     finally:
@@ -66,13 +71,14 @@ def _run_analysis(job_id: str, kmz_path: str):
 @router.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
     job_id = str(uuid.uuid4())
-    create_job(job_id)
+    original_name = file.filename or "unknown.kmz"
+    create_job(job_id, filename=original_name)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".kmz") as f:
         f.write(await file.read())
         kmz_path = f.name
-    thread = threading.Thread(target=_run_analysis, args=(job_id, kmz_path), daemon=True)
+    thread = threading.Thread(target=_run_analysis, args=(job_id, kmz_path, original_name), daemon=True)
     thread.start()
-    return {"job_id": job_id}
+    return {"job_id": job_id, "filename": original_name}
 
 
 @router.get("/api/status/{job_id}")
@@ -130,3 +136,9 @@ def locations(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"locations": job.locations or []}
+
+
+@router.get("/api/runs")
+def runs():
+    """Return metadata for all completed runs (newest first)."""
+    return {"runs": list_completed_jobs()}

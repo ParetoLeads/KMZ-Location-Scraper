@@ -269,6 +269,30 @@
     .b-type   { background: #EDE9FE; color: #5B21B6; }
     .local-names { color: var(--muted); font-size: 0.72rem; max-width: 200px; }
 
+    /* ── Previous Runs ── */
+    .runs-empty { color: var(--muted); font-size: 0.83rem; text-align: center; padding: 1.5rem 0; }
+    #runs-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    #runs-table th {
+      background: var(--bg); color: var(--muted); font-weight: 600;
+      padding: 0.45rem 0.75rem; text-align: left; font-size: 0.73rem;
+      text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border);
+    }
+    #runs-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    #runs-table tr:last-child td { border-bottom: none; }
+    #runs-table tr:hover td { background: var(--orange-light); }
+    .run-name { font-weight: 600; }
+    .run-ts { color: var(--muted); font-size: 0.75rem; }
+    .run-expired { color: #9CA3AF; font-size: 0.75rem; font-style: italic; }
+    .btn-dl {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      padding: 4px 12px; border-radius: 6px; border: none;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer;
+      background: #16A34A; color: white; font-family: inherit;
+      transition: background .15s;
+    }
+    .btn-dl:hover { background: #15803D; }
+    .btn-dl:disabled { background: #D1D5DB; color: #9CA3AF; cursor: not-allowed; }
+
     /* ── Footer ── */
     footer {
       text-align: center; padding: 2.5rem 1rem;
@@ -354,6 +378,14 @@
       </div>
     </div>
   </main>
+
+  <!-- Previous Runs -->
+  <div class="card" id="runs-section">
+    <p class="card-title">🕓 Previous Runs</p>
+    <div id="runs-content">
+      <p class="runs-empty">No previous runs yet.</p>
+    </div>
+  </div>
 
   <footer>
     <img src="/logo.png" alt="Paretoleads" />
